@@ -1,0 +1,146 @@
+/ GSM - Version: Latest 
+#include <GSM.h>
+
+#define gsmport Serial1
+
+
+String textsms, number;
+
+
+void setup() {
+
+Serial.begin(115200);
+gsmport.begin(115200);
+Serial.println("Start sketch");
+
+//Настраиваем приём сообщений с других устройств
+gsmport.print("AT+CMGF=1\r");
+delay(300);
+printstrfrommodem();
+gsmport.print("AT+IFC=1, 1\r");
+delay(300);
+printstrfrommodem();
+gsmport.print("AT+CPBS=\"SM\"\r");
+delay(300);
+printstrfrommodem();
+gsmport.print("AT+CNMI=1,2,2,1,0\r");
+delay(500);
+printstrfrommodem();
+
+
+
+   pinMode(13, OUTPUT);
+  
+}
+
+// the loop function runs over and over again forever
+void loop() {
+  
+   Serial.print("Enter string: ");
+   char str[20];  // telephone number to send sms
+   readSerial(str);
+   Serial.println(str);
+   gsmport.println(str);
+   printstrsec(1);
+   Serial.println("Sending sms");
+   number="+79218277101";
+   textsms="kuh 25";
+   textsms=textsms+"\r"+"tepl 29 10:15";
+   textsms=textsms+"\r"+"komn 20 21:30" ;
+   textsms=textsms+"\r"+"mans 15";
+   textsms=textsms+"\r"+"podah 29";
+   textsms=textsms+"\r"+"obrat 25";
+   
+   sendmessage(number, textsms);
+   Serial.println("Sems send");
+   printstrsec(5);
+   Serial.println("Done");
+   
+  // printstrsec(1); 
+    
+}
+  
+ 
+/*
+  // read from port 0, send to port 1:
+  if (Serial.available()) {
+    int inByte = Serial.read();
+    Serial1.write(inByte);
+  }*/
+  
+  
+
+ 
+ 
+ int readSerial(char result[]) {
+  int i = 0;
+  while (1) {
+    while (Serial.available() > 0) {
+      char inChar = Serial.read();
+      if (inChar == '\n') {
+        result[i] = '\0';
+        Serial.flush();
+        return 0;
+      }
+      if (inChar != '\r') {
+        result[i] = inChar;
+        i++;
+      }
+    }
+  }
+}
+
+void sendmessage(String telnum, String text) 
+{
+
+  if (telnum.length() > 4)
+  {
+    if (text.length() < 160)
+     {
+     delay(100);
+     gsmport.println("AT"); // пошлем на всякий случай пустую команду, если в буфере модема неисполненные симыолы
+     delay(100);
+     gsmport.print("AT+CMGF=1\r");
+     delay(100);
+     gsmport.println("AT+CMGS=\"" + telnum + "\"");
+     delay(100);
+     gsmport.println(text);
+     delay(100);
+     gsmport.println((char)26);
+     //delay(100);
+    }
+    else
+     {
+      Serial.println("Число символов в смс превышает 160:"); 
+      Serial.println(text.length()); 
+     }
+  }
+}
+
+ void printstrfrommodem() {
+  if(gsmport.available()) //если модуль что-то послал
+  {  
+    char ch = ' ';
+    String val = "";
+    
+    while(gsmport.available()) 
+     {  
+       ch = gsmport.read();
+       val += char(ch); //собираем принятые символы в строку
+       delay(5);
+     }
+
+    Serial.print("GSM modem send> ");
+    Serial.println(val);
+  }
+ }   
+   
+   // ждет сообщений с модема в течении interval секунд и печатает их
+   void printstrsec(int interval) {
+ float ms = millis();
+ while (millis()<ms+interval*1000) 
+  {
+   printstrfrommodem(); 
+  }
+ }
+ 
