@@ -1,11 +1,18 @@
-/ GSM - Version: Latest 
-#include <GSM.h>
+// GSM - Version: Latest 
+//https://www.tinyosshop.com/arduino-gsm-shield
+
+//cхема
+//https://easyeda.com/sasha_ml/Arduino_Mega-15a761a8028f4398b58b41b1c01d44cf
+
+//этот код
+//https://create.arduino.cc/editor/sasha_ml/d271f25d-d158-4372-87bb-69d778120403/preview
+
 
 #define gsmport Serial1
 
 
 String textsms, number;
-
+String mynumber="+79218277101";
 
 void setup() {
 
@@ -35,43 +42,10 @@ printstrfrommodem();
 
 // the loop function runs over and over again forever
 void loop() {
-  
-   Serial.print("Enter string: ");
-   char str[20];  // telephone number to send sms
-   readSerial(str);
-   Serial.println(str);
-   gsmport.println(str);
-   printstrsec(1);
-   Serial.println("Sending sms");
-   number="+7921820000";
-   textsms="kuh 25";
-   textsms=textsms+"\r"+"tepl 29 10:15";
-   textsms=textsms+"\r"+"komn 20 21:30" ;
-   textsms=textsms+"\r"+"mans 15";
-   textsms=textsms+"\r"+"podah 29";
-   textsms=textsms+"\r"+"obrat 25";
-   
-   sendmessage(number, textsms);
-   Serial.println("Sems send");
-   printstrsec(5);
-   Serial.println("Done");
-   
-  // printstrsec(1); 
-    
-}
-  
- 
-/*
-  // read from port 0, send to port 1:
-  if (Serial.available()) {
-    int inByte = Serial.read();
-    Serial1.write(inByte);
-  }*/
-  
+  checkforsms();
+ }
   
 
- 
- 
  int readSerial(char result[]) {
   int i = 0;
   while (1) {
@@ -144,3 +118,45 @@ void sendmessage(String telnum, String text)
   }
  }
  
+ void checkforsms() {
+  if(gsmport.available()) //если модуль что-то послал
+  {  
+    char ch = ' ';
+    String val = "";
+    
+    while(gsmport.available()) 
+     {  
+       ch = gsmport.read();
+       val += char(ch); //собираем принятые символы в строку
+       delay(3);
+     }
+    Serial.print("GSM modem send> ");
+    Serial.println(val);
+    if (val.indexOf("+CMT") > -1)
+    {
+     Serial.println("This SMS"); 
+     if (val.indexOf(mynumber) > -1)
+     {
+       Serial.println("This mynumber"); 
+       if (val.indexOf("#info") > -1)
+       {
+         Serial.println("sending info");
+         sendinfo();
+        }
+      }
+    }
+    
+    
+  }
+ }
+ 
+ void sendinfo() 
+ {
+  textsms=textsms+"\r"+"tepl 29 10:15";
+   textsms=textsms+"\r"+"komn 20 21:30" ;
+   textsms=textsms+"\r"+"mans 15";
+   textsms=textsms+"\r"+"podah 29";
+   textsms=textsms+"\r"+"obrat 25";
+   
+   sendmessage(mynumber, textsms);
+ }
