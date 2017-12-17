@@ -43,7 +43,7 @@ void loop() {
    gsmport.println(str);
    printstrsec(1);
    Serial.println("Sending sms");
-   number="+79218277101";
+   number="+7921820000";
    textsms="kuh 25";
    textsms=textsms+"\r"+"tepl 29 10:15";
    textsms=textsms+"\r"+"komn 20 21:30" ;
