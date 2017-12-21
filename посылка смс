@@ -47,6 +47,27 @@ void loop() {
   
 
  int readSerial(char result[]) {//
+// GSM - Version: Latest //https://www.tinyosshop.com/arduino-gsm-shield
+
+//cхема
+//https://easyeda.com/sasha_ml/Arduino_Mega-15a761a8028f4398b58b41b1c01d44cf
+
+//этот код
+//https://create.arduino.cc/editor/sasha_ml/d271f25d-d158-4372-87bb-69d778120403/preview
+//--
+//
+
+#define gsmport Serial1
+
+
+String textsms, number, txt;
+String mynumber="+79218277101";
+int debugstatus=1;
+String val=""; //глобальная переменная где храним строку с модема, чотбы не создавать лишний string в вызываемых процедурах
+
+void setup() {
+
+Serial.begin(115200);//
 // GSM - Version: Latest 
 //https://www.tinyosshop.com/arduino-gsm-shield
 
@@ -61,15 +82,243 @@ void loop() {
 
 #define gsmport Serial1
 
-
 String textsms, number, txt;
-String mynumber="+79218277101";
+String mynumber;
+String temp;
 int debugstatus=1;
 String val=""; //глобальная переменная где храним строку с модема, чотбы не создавать лишний string в вызываемых процедурах
-
+int enableset;
 void setup() {
-
 Serial.begin(115200);
+dbgprint("Start sketch");
+gsmport.begin(115200);
+gsmport.setTimeout(500); //будем ждать ответа модема по полсекунды
+delay(500);
+
+/*
+//Включаем GPRS Shield, эмулируя нажатие кнопки POWER
+  pinMode(9, OUTPUT);
+  digitalWrite(9, HIGH);    // Подаем High на пин 9
+  delay(3000);              // на 3 секунды
+  digitalWrite(9, LOW);     // и отпускаем в Low. 
+  delay(5000);              // Ждём 5 секунд для старта шилда
+  */
+  
+//Настраиваем приём сообщений с других устройств и печатаем ответы модема
+gsmport.print("AT+CMGF=1\r"); // модем будет посылать смс в текстовом формате
+printstrfrommodem();
+gsmport.print("AT+IFC=1, 1\r");  //— устанавливает программный контроль потоком передачи данных
+printstrfrommodem();
+gsmport.print("AT+CPBS=\"SM\"\r"); //— открывает доступ к данным телефонной книги SIM-карты AT+CPBS="SM" выбрать как основную память сим-карту
+printstrfrommodem();
+gsmport.print("AT+CNMI=1,2,2,1,0\r"); // — включает оповещение о новых сообщениях, новые сообщения приходят в следующем формате: +CMT: "<номер телефона>", "", "<дата, время>", а на следующей строчке с первого символа идёт содержимое сообщения
+printstrfrommodem();
+gsmport.println("AT+CMGD=1,4"); // удалить все сообщения в памяти
+printstrfrommodem();
+gsmport.println("AT+CPBR=1"); // считывает запись с индексом 1 c сим карты
+
+printstrfrommodem();
+
+mynumber="+79218277101";
+pinMode(13, OUTPUT); //для идикаторного диода
+
+dbgprint("Setup done");
+ // String Command="AT+CUSD=1,"+String('"')+String('*')+"100#"+'"';
+   //AT+CUSD=1,"*100#"
+   //Serial.println(Command); 
+}
+
+
+void loop() 
+{
+  if (StrFromSerial(txt)>0)  //ждем команды вручную с порта и если что-то есть - посылаем в модем и печатаем ответ
+  {
+      gsmport.print(txt);
+      temp=gsmport.readString();
+      Serial.print(temp);
+  };
+  checkforsms(); // проверяем буфер порта модема  на наличе данных и смс в нем
+ 
+}
+  
+
+void checkforsms() 
+ {
+  if(gsmport.available()) //если модуль что-то послал
+  {  
+    val=gsmport.readString();  //буфер порта только 64байта, смс может обрезать до 14 символов, команды делать лучше длиной до 10 символов
+    if (val.indexOf("+CMT") > -1)
+    {
+     Serial.println("Incoming SMS:");
+     Serial.println(val);
+     gsmport.println("AT+CMGD=1,4"); // удалить все сообщения в памяти чтобы не забивать память модема
+     gsmport.readString(); // игнорируем ответ- читаем в никуда
+     String Numtel=substrPoNomeru(1);
+     if ((Numtel.indexOf(mynumber) > -1) || (enableset==1) ) // если это свой номер или настройки разрешены
+     {
+       Serial.println("This mynumber"); 
+       if (val.indexOf("#info") > -1) sendinfo();
+       if (val.indexOf("#settime") > -1) settimedatefromsms();
+       if (val.indexOf("#setmynum") > -1) setmynumber();
+       if (val.indexOf("#balans") > -1) sendbalans();
+      }
+    }
+    else
+    {
+      Serial.println("Modem send other - not sms");
+      Serial.println(val);
+    }
+  }
+ }
+
+
+//здесь пошли процедуры исполнения команд, принятых в смс
+ void sendinfo() 
+  {
+  textsms="info:";
+  textsms=textsms+"\r"+"tepl 29 10:15";
+   textsms=textsms+"\r"+"komn 20 21:30" ;
+   textsms=textsms+"\r"+"mans 15";
+   textsms=textsms+"\r"+"podah 29";
+   textsms=textsms+"\r"+"obrat 25";
+   sendmessage(mynumber, textsms);
+   inf("comamnd #sendinfo");
+  }
+ 
+ void settimedatefromsms()
+  {
+   // надо делать только при зажатой кнопке
+   inf("comamnd #settime");
+   String DateTime=substrPoNomeru(3);
+   String Command="AT+CCLK="+'"'+DateTime+'"'; 
+   gsmport.println(Command);
+   temp=gsmport.readString();
+   Serial.println(temp);
+   gsmport.println(Command);
+   gsmport.println("AT+CCLK?"); 
+   temp=gsmport.readString();
+   Serial.println(temp);
+  }
+
+void setmynumber ()
+{
+ inf("command #setmynum");
+  String Numtel=substrPoNomeru(1);
+  String Command="AT+CPBW=1,\""+Numtel+"\",145,\"Master\"";
+  gsmport.println(Command);
+  String Mynum=substrPoNomeru(1);
+  printstrfrommodem();
+  inf(Mynum)  ;
+}
+  
+  
+
+
+void sendbalans ()
+{
+ inf("command #balans");
+//тут поставим кнопку при зажатии которой можно записывать мастер номер
+  String Command="AT+CUSD=1,"+String('"')+String('*')+"100#"+'"';
+   //AT+CUSD=1,"*100#"
+   Serial.println(Command); 
+   gsmport.println(Command);
+   delay(10000);
+   temp=gsmport.readString();
+   String text=temp.substring(37);
+   Serial.println(text);
+   sendmessage(mynumber, text);
+   
+}
+
+ void sendmessage(String telnum, String text) 
+{
+  if (telnum.length() > 4)
+  {
+    if (text.length() < 160)
+     {
+     delay(100);
+     gsmport.println("AT"); // пошлем на всякий случай пустую команду, если в буфере модема неисполненные симыолы
+     delay(100);
+     gsmport.print("AT+CMGF=1\r");
+     delay(200);
+     gsmport.println("AT+CMGS=\"" + telnum + "\"");
+     delay(200);
+     gsmport.println(text);
+     delay(200);
+     gsmport.println((char)26);
+     delay(200);
+     gsmport.readString(); // чистим буфер
+    }
+    else
+     {
+      Serial.println("Число символов в смс превышает 160:"); 
+      Serial.println(text.length()); 
+     }
+  }
+}
+
+ 
+ //функция читает данные с порта 0 без пауз и записывает в переданную переменную val
+ int StrFromSerial(String &val)  // val - передача параметра поссылке, ее нужно менять
+{ 
+  int i=0;
+  if(Serial.available()) // что-то послалано в порт
+  {  
+    char ch = ' ';
+    val = "";
+    while(Serial.available()) 
+    {  
+     ch = Serial.read();
+     val += char(ch); //собираем принятые символы в строку
+     delay(5);
+    }
+    i=1;
+  }
+  return i;
+}   
+
+
+void dbgprint(String text) {
+  if (debugstatus=1)  Serial.println(text); 
+ }
+
+
+void inf(String text) {  //вывод промежуточнонй информации в порт на дисплей или еще куда
+  Serial.println(text); 
+ }
+ 
+ 
+ 
+//процедуры разбора строки данные идут в кавычках
+//возвращает подстроку между кавычками по номеру данных
+String substrPoNomeru(int num)
+{// val - глобальная переменная, где содержится строка для разбора
+  String strret="";
+  char q='"'; // будем искать символ кавычку
+  int poz2=-1; // позиция 0 это первая позиция в строке
+  int poz1=-1; 
+  int k=0;
+  for (int i=0; i <= val.length()-1 ; i++)
+  {
+   if (val[i]==q)
+    {
+      k=k+1;
+      if (k==num*2-1) poz1=i;
+      if (k==num*2) poz2=i;
+    };
+  };
+  if ((poz1>-1)&(poz2>-1))  strret=val.substring(poz1+1, poz2);
+  return strret;
+}
+
+
+ void printstrfrommodem() // печатает ответ модема в порт
+ {
+    val=gsmport.readString();
+    Serial.print("GSM modem send> ");
+    Serial.println(val);
+ }   
+
 dbgprint("Start sketch");
 gsmport.begin(115200);
 
