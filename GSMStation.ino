@@ -35,6 +35,9 @@ long int mm, msec;
 //Adafruit_PCD8544 display = Adafruit_PCD8544(52, 49, 48, 51, 50); было на родном spi, нужно освободить интерфейс для других устройств
 Adafruit_PCD8544 display = Adafruit_PCD8544(32, 29, 28, 31, 30);
 
+#include <SPI.h>
+#include <RF22.h>
+
 #define gsmport Serial1
 
 String textsms, number, txt;
@@ -44,7 +47,19 @@ int debugstatus=1;
 unsigned long predtime, nexttime, tektime; 
 String val=""; //глобальная переменная где храним строку с модема, чотбы не создавать лишний string в вызываемых процедурах
 int enableset;
-
+uint8_t buf[VW_MAX_MESSAGE_LEN]; //принятое неразобранное сообщение
+uint8_t buflen = VW_MAX_MESSAGE_LEN; //его длина
+byte msg[30]; //принятое расшифрованное сообщение
+int len; // его длина
+int datalen; //  длина данных - количество значений данных
+int  device_id; // идентификатор (номер) датчика,
+byte data[10]; // принятые данные от сенсоров датчика
+int  device_type ; // тип датчика
+int vcc; // напряжение батареи умноженное на 10
+char symbolvcc; // b или B - символ разряда батареи
+float vbat; // напряжение батареи
+float temp1;
+String dname="test"; // имя датчика
 
 
 void setup() {
@@ -115,43 +130,12 @@ void loop()
   };
   checkforsms(); // проверяем буфер порта модема  на наличе данных и смс в нем
   
-  uint8_t buf[VW_MAX_MESSAGE_LEN];
-  uint8_t buflen = VW_MAX_MESSAGE_LEN; // в библиотеке это 30 обязательно присвоить перед вызовом vw_get_message, иначе переменная меняется
+
+  buflen = VW_MAX_MESSAGE_LEN; // в библиотеке это 30 обязательно присвоить перед вызовом vw_get_message, иначе переменная меняется
   if (vw_get_message(buf, &buflen)) // Non-blocking
   {
-
-    int i;
-    digitalWrite(13, true);
-    delay(200);
-    digitalWrite(13, false); // мигнем диодом если хоть что-то приняли
-    String tmp="";
-    Serial.print("Got: ");
-     display.clearDisplay();
-      display.display();
-      delay(100);  // мигнем пустым дисплеем, чтобы показать, что программа работает
-    for (i = 0; i < buflen; i++) //выведем принятое в числовом виде для отладки
-    {
-      Serial.print(buf[i], DEC);
-      Serial.print(" ");
-      display.print(buf[i], DEC);
-      display.print(" ");
-      if (buf[i]==0)
-       {
-         tmp=tmp+"/0";
-       }
-       else 
-        {
-          tmp=tmp+char(buf[i]);
-        }
-      
-    }
-     display.println("");
-     display.print(tmp);  //выведем принятое в символьном виде
-    Serial.println("");
-     Serial.println(tmp);
+    readremotedata();
     
-      
-    display.display();
   }
     /*Serial.println("");
     digitalWrite(13, false);
@@ -406,4 +390,175 @@ void refreshdisplay()
   delay(100);  // мигнем пустым дисплеем, чтобы показать, что программа работает
   display.println("Main event 10s\r\n" +String(int(tektime/1000))+" sec");
   display.display();
+}
+
+void readremotedata()
+{
+  
+  if(((buflen % 2) > 0) || (buflen < 4))  // если длина сообщения нечетная или меньше 45 байт -оно не наше - покажем данные и вернемся
+  {
+  Serial.print("Not valid data: ");
+  displaydata();  
+  return;
+  }
+
+  len=buflen/2;
+  for (int i = 0; i < len; i++) 
+  {
+    if ((buf[i])==(buf[len*2-i-1])) //проверяем сообщение - данные в нем дублируются дважды, второй раз - в обоатном порядке
+    {
+    msg[i] = buf[i];
+    }
+    else 
+    {
+    Serial.print("Error in data: ");
+    displaydata(); 
+    return;
+    }
+  }
+  if (buf[0]>200)
+  {
+  Serial.print("Error number device: ");
+  displaydata(); 
+  return;
+  }
+  if (buf[0] < 100) // если номер датчика меньше 100, то это короткая посылка, иначе длинная - разные обработчики
+  {
+    readshortdata();
+  }
+  else
+  {
+    readfulldata();
+  }
+  
+}
+
+void readshortdata()
+{
+
+//Serial.print("short: ");
+device_id=msg[0]; // идентификатор (номер) датчика в длинной посылке увеличен на 100,
+datalen=len-1; // 1 байт с 0 по 0 служебных данных
+for (int i = 1; i < len; i++) 
+data[i-1]=msg[i]; // принятые данные от сенсоров датчика
+
+Serial.print("device_id: ");
+Serial.println(device_id);
+
+
+//Serial.print("data0 ");
+//Serial.println(data[0]);
+
+temp1=data[0];
+if (temp1>127) // старший бит=1 , значит орицательная температура
+{
+  temp1=temp1-256;
+}
+temp1=temp1/2; // было передано удвоенное значение температуры
+
+Serial.print("temp1 ");
+Serial.println(temp1);
+Serial.println("");
+
+  //displaydata(); 
+  
+
+}
+
+void readfulldata()
+{
+//Serial.print("full: ");
+device_id=msg[0]-100; // идентификатор (номер) датчика в длинной посылке увеличен на 100,
+device_type=msg[1] ; // тип датчика
+
+dname[0]=msg[2] ; // имя датчика
+dname[1]=msg[3];
+dname[2]=msg[4];
+dname[3]=msg[5];
+
+symbolvcc=msg[6];  // b или B - символ разряда батаре
+vcc=msg[7];
+vbat=vcc; // преобразовать тип
+vbat=vbat/10;
+datalen=len-8; // 8 байт с 0 по 7 служебных данных
+
+for (int i = 8; i < len; i++) 
+ {
+  data[i-8]=msg[i]; // принятые данные от сенсоров датчика
+ }
+
+
+Serial.print("Device_id: ");
+Serial.print(device_id);
+Serial.print(" ");
+
+
+//Serial.print("device_type: ");
+//Serial.println(device_type);
+
+//Serial.print("device_name: ");
+Serial.println(dname);
+
+Serial.print("vcc: ");
+Serial.print(symbolvcc);
+Serial.print(" ");
+Serial.println(vbat);
+
+//Serial.print("data0 ");
+//Serial.println(data[0]);
+
+temp1=data[0];
+if (temp1>127) // старший бит=1 , значит орицательная температура
+{
+  temp1=temp1-256;
+}
+temp1=temp1/2; // было передано удвоенное значение температуры
+
+Serial.print("temp1 ");
+Serial.println(temp1);
+
+Serial.println("");
+
+  
+
+
+
+}
+
+
+
+void displaydata()
+{
+  int i;
+    digitalWrite(13, true);
+    delay(200);
+    digitalWrite(13, false); // мигнем диодом если хоть что-то приняли
+    String tmp="";
+    Serial.print("Got: ");
+     display.clearDisplay();
+      display.display();
+      delay(100);  // мигнем пустым дисплеем, чтобы показать, что программа работает
+    for (i = 0; i < buflen; i++) //выведем принятое в числовом виде для отладки
+    {
+      Serial.print(buf[i], DEC);
+      Serial.print(" ");
+      display.print(buf[i], DEC);
+      display.print(" ");
+      if (buf[i]==0)
+       {
+         tmp=tmp+"/0";
+       }
+       else 
+        {
+          tmp=tmp+char(buf[i]);
+        }
+      
+    }
+     display.println("");
+     display.print(tmp);  //выведем принятое в символьном виде
+    Serial.println("");
+     Serial.println(tmp);
+    
+      
+    display.display();
 }
