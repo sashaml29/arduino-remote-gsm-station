@@ -13,6 +13,30 @@
 //--
 //
 
+
+/* подключение часов DS3231
+
+http://blog.rchip.ru/podklyuchenie-chasov-realnogo-vremeni-rtc-ds3231-k-arduino/
+
+http://iarduino.ru/file/235.html  библиотека <iarduino_RTC.h>  
+
+подключение к мега2560 
+SCL 21 (scl) 
+SCA 20 (sca)
+VCC  +5v 
+GND gnd 
+time.settime(0,51,21,27,10,15,2);  Устанавливаем время: 0 сек, 51 мин, 21 час, 27, октября, 2015 года, вторник
+*/ 
+#include <iarduino_RTC.h>
+iarduino_RTC time(RTC_DS3231);                          
+ int year;
+  int month;
+  int date;
+  int hour;
+  int min;
+  int sec;
+
+
 #include <VirtualWire.h>
 const int receive_pin = 22; // пин приемника
 int s = 0;
@@ -81,9 +105,12 @@ record md[10]; //массив главных данных (maindata) от дат
 void setup() {
   wdt_disable();
   Serial.begin(9600);
+  delay(500);
   display.begin();
   display.setContrast(65);
-  inf("Init ...");
+  time.begin();                                           
+  String tmpt=time.gettime("d-m-Y, H:i:s");
+  inf("Init..\r\n"+tmpt);
   dbgprint("Start sketch");
   gsmport.begin(115200);
   gsmport.setTimeout(500); //будем ждать ответа модема по полсекунды в строках gsmport.readString();
@@ -200,14 +227,41 @@ void settimedatefromsms()
   // надо делать только при зажатой кнопке
   inf("comamnd #settime");
   String DateTime = substrPoNomeru(3);
-  String Command = "AT+CCLK=" + '"' + DateTime + '"';
+  String Command = "AT+CCLK=" + '"' + DateTime + '"'; //часы в модеме ужасно убегают, лучше не пользоваться
   gsmport.println(Command);
   temp = gsmport.readString();
   Serial.println(temp);
   gsmport.println(Command);
   gsmport.println("AT+CCLK?");
+  // Datetime в таком формате 18/01/08,02:54:11+12
+  year=DateTime.substring(0,2).toInt();
+  month=DateTime.substring(3,5).toInt();
+  date=DateTime.substring(6,8).toInt();
+  hour=DateTime.substring(9,11).toInt();
+  min=DateTime.substring(12,14).toInt();
+  sec=DateTime.substring(15,17).toInt();
+ 
+ /*Serial.println(year);
+  Serial.println(month);
+  Serial.println(year);
+  Serial.println(date);
+  Serial.println(hour);
+  Serial.println(min);
+  Serial.println(sec);
+
+  
+  Serial.println(DateTime.substring(0,2));
+  Serial.println(DateTime.substring(3,5));
+  Serial.println(DateTime.substring(6,8));
+  Serial.println(DateTime.substring(9,11));
+  Serial.println(DateTime.substring(12,14));
+  Serial.println(DateTime.substring(15,17));
+  */
   temp = gsmport.readString();
   Serial.println(temp);
+  time.settime(sec,min,hour,date,month,year); 
+  String tmpt=time.gettime("d-m-Y, H:i:s");
+  inf("Time:\r\n"+tmpt);
 }
 
 
@@ -469,6 +523,8 @@ void displaymd() //показывает на экране массив  данн
       strdf = strdf + "\r\n";
       strdf = strdf + "old " + String(told) + " sec\r\n";
       //  Serial.print(strdf);
+       String tmpt=time.gettime("d-m-y H:i");
+       strd=tmpt+"\r\n"+strd; // для отладки покажем время
       Serial.print(strd);
       Serial.println("");
       display.clearDisplay();
