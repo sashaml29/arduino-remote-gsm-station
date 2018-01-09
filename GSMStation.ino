@@ -14,27 +14,67 @@
 //
 
 
+/*
+  SD card read/write
+
+  This example shows how to read and write data to and from an SD card file
+  The circuit:
+   SD card attached to SPI bus as follows Arduino Uno:
+ ** MOSI - pin 11
+ ** MISO - pin 12
+ ** CLK -  pin 13
+ ** CS - pin 4 (for MKRZero SD: SDCARD_SS_PIN)
+
+  arduino Mega
+  gnd -- gnd
+  3.3v -- 3.3 v
+  5v -- 5v
+  cs -- 53
+  mosi -- 51
+  sck -- 52
+  miso -- 50
+  gnd -- gnd
+
+
+
+*/
+
+#include <SPI.h>
+#include <SD.h>
+
+
+
+
+// change this to match your SD shield or module;
+// Arduino Ethernet shield: pin 4
+// Adafruit SD shields and modules: pin 10
+// Sparkfun SD shield: pin 8
+// MKRZero SD: SDCARD_SS_PIN
+//Arduino Mega 2650 pin 53
+const int chipSelect = 53 ;
+
+
 /* подключение часов DS3231
 
-http://blog.rchip.ru/podklyuchenie-chasov-realnogo-vremeni-rtc-ds3231-k-arduino/
+  http://blog.rchip.ru/podklyuchenie-chasov-realnogo-vremeni-rtc-ds3231-k-arduino/
 
-http://iarduino.ru/file/235.html  библиотека <iarduino_RTC.h>  
+  http://iarduino.ru/file/235.html  библиотека <iarduino_RTC.h>
 
-подключение к мега2560 
-SCL 21 (scl) 
-SCA 20 (sca)
-VCC  +5v 
-GND gnd 
-time.settime(0,51,21,27,10,15,2);  Устанавливаем время: 0 сек, 51 мин, 21 час, 27, октября, 2015 года, вторник
-*/ 
+  подключение к мега2560
+  SCL 21 (scl)
+  SCA 20 (sca)
+  VCC  +5v
+  GND gnd
+  time.settime(0,51,21,27,10,15,2);  Устанавливаем время: 0 сек, 51 мин, 21 час, 27, октября, 2015 года, вторник
+*/
 #include <iarduino_RTC.h>
-iarduino_RTC time(RTC_DS3231);                          
- int year;
-  int month;
-  int date;
-  int hour;
-  int min;
-  int sec;
+iarduino_RTC time(RTC_DS3231);
+int year;
+int month;
+int date;
+int hour;
+int min;
+int sec;
 
 
 #include <VirtualWire.h>
@@ -68,7 +108,7 @@ String textsms, number, txt, strd, strdf;
 String mynumber;
 String temp;
 int debugstatus = 1;
-unsigned long predtime, nexttime, tektime;
+unsigned long predtime1, nexttime1, predtime2, nexttime2, predtime3, nexttime3,  tektime; // счетчики времени для вызова периодических событий
 String val = ""; //глобальная переменная где храним строку с модема, чотбы не создавать лишний string в вызываемых процедурах
 int enableset;
 uint8_t buf[VW_MAX_MESSAGE_LEN]; //принятое неразобранное сообщение
@@ -93,7 +133,7 @@ struct record  // строка записи данных в массиве да�
   char symbolvcc = 0; // b или B - символ разряда батареи
   char dname[5] = "xxxx"; //имя датчика из 4 символов, 6 байт зарезервировано
   byte sort = 0; // значение сортировки, возможно использовать для сортировки вывода
-  long int time = 0; //время полседнего прихода данных в миллисекундах 4 байта
+  long int time = 0; //время последнего прихода данных в миллисекундах 4 байта
   byte datalen; //количество дананных
   float data[10]; //сами данные 4*10=40 байт
   //итого 54 байта занимает запись
@@ -106,11 +146,23 @@ void setup() {
   wdt_disable();
   Serial.begin(9600);
   delay(500);
+
   display.begin();
   display.setContrast(65);
-  time.begin();                                           
-  String tmpt=time.gettime("d-m-Y, H:i:s");
-  inf("Init..\r\n"+tmpt);
+  time.begin();
+  String tmpt = time.gettime("d-m-Y, H:i:s");
+  inf("Init..\r\n" + tmpt);
+
+  if (!SD.begin(chipSelect))
+  {
+    Serial.println("Card failed, or not present");
+    inf("SD card initialization failed");
+  }
+  else
+  {
+    inf("SD card - correct");
+  }
+
   dbgprint("Start sketch");
   gsmport.begin(115200);
   gsmport.setTimeout(500); //будем ждать ответа модема по полсекунды в строках gsmport.readString();
@@ -144,8 +196,12 @@ void setup() {
   vw_set_ptt_inverted(true); // Required for DR3100
   vw_setup(2000);
   vw_rx_start();
-  predtime = 0;
-  nexttime = 0;
+  predtime1 = 0;
+  nexttime1 = 0;
+  predtime2 = 0;
+  nexttime2 = 0;
+  predtime3 = 0;
+  nexttime3 = 0;
   wdt_enable (WDTO_8S); // watchdog на 8 секунд, родной загрузчик ардуино должен быть обязательно заменен на otiboot, иначе будет циклическая перезагрузка
 }
 
@@ -154,14 +210,60 @@ void loop()
 {
   wdt_reset();  // вызываемые процедуры из loop() суммарно не должны длиться более 8 секунд (либо в них должен стоять еще wdt_reset(); ) , иначе перезагруга
   tektime = millis();
-  if ((nexttime < tektime) || (predtime > tektime)) mainevent(); //если время следующего события пришло или время предыдущего события больше текущего времени, что бывает раз в 49 дней при переполнении millis(), то вызываем основное событие
+  if ((nexttime1 < tektime) || (predtime1 > tektime)) event1(); //если время следующего события пришло или время предыдущего события больше текущего времени, что бывает раз в 49 дней при переполнении millis(), то вызываем основное событие
   if (StrFromSerial(txt) > 0) //ждем команды вручную с порта и если что-то есть - посылаем в модем и печатаем ответ
   {
-    gsmport.print(txt);
-    temp = gsmport.readString();
-    /*Serial.print(temp);
-      display.print(temp);*/
-    inf(temp);
+    // результат чтения с порта в переменной txt
+    if (txt.substring(0, 2) == "AT") // если строка начинается с AT, то все что пришло с порта посылаем модему
+    {
+      gsmport.print(txt);
+      temp = gsmport.readString();
+      /*Serial.print(temp);
+        display.print(temp);*/
+      inf(temp);
+    }
+    else if (txt.substring(0, 3) == "log") // выводим в сериал весь логфайл с нужным именем,послали команду например log abc, значит буде выводить файл abc.csv
+    {
+      String filename = txt.substring(4);
+      filename.trim();
+      filename = filename + ".csv";
+      Serial.print("log: ");
+      Serial.println(filename);
+      File dataFile = SD.open(filename);
+      if (dataFile)
+      {
+        while (dataFile.available())
+        {
+          Serial.write(dataFile.read());
+        }
+        dataFile.close();
+      }
+
+      else
+      {
+
+        Serial.print("error opening ");
+        Serial.println(filename);
+      }
+
+    }
+
+    else if (txt.substring(0, 6) == "dellog") //послали команду например log abc, значит буде выводить файл abc.csv
+    {
+      String filename = txt.substring(7);
+      filename.trim();
+      filename = filename + ".csv";
+      Serial.print("delete: ");
+      Serial.println(filename);
+      if (SD.remove(filename))
+      {
+        Serial.println("deleted ");
+      }
+      else
+      {
+        Serial.println("Not deleted!");
+      }
+    }
   };
   checkforsms(); // проверяем буфер порта модема  на наличе данных и смс в нем
 
@@ -234,34 +336,34 @@ void settimedatefromsms()
   gsmport.println(Command);
   gsmport.println("AT+CCLK?");
   // Datetime в таком формате 18/01/08,02:54:11+12
-  year=DateTime.substring(0,2).toInt();
-  month=DateTime.substring(3,5).toInt();
-  date=DateTime.substring(6,8).toInt();
-  hour=DateTime.substring(9,11).toInt();
-  min=DateTime.substring(12,14).toInt();
-  sec=DateTime.substring(15,17).toInt();
- 
- /*Serial.println(year);
-  Serial.println(month);
-  Serial.println(year);
-  Serial.println(date);
-  Serial.println(hour);
-  Serial.println(min);
-  Serial.println(sec);
+  year = DateTime.substring(0, 2).toInt();
+  month = DateTime.substring(3, 5).toInt();
+  date = DateTime.substring(6, 8).toInt();
+  hour = DateTime.substring(9, 11).toInt();
+  min = DateTime.substring(12, 14).toInt();
+  sec = DateTime.substring(15, 17).toInt();
 
-  
-  Serial.println(DateTime.substring(0,2));
-  Serial.println(DateTime.substring(3,5));
-  Serial.println(DateTime.substring(6,8));
-  Serial.println(DateTime.substring(9,11));
-  Serial.println(DateTime.substring(12,14));
-  Serial.println(DateTime.substring(15,17));
+  /*Serial.println(year);
+    Serial.println(month);
+    Serial.println(year);
+    Serial.println(date);
+    Serial.println(hour);
+    Serial.println(min);
+    Serial.println(sec);
+
+
+    Serial.println(DateTime.substring(0,2));
+    Serial.println(DateTime.substring(3,5));
+    Serial.println(DateTime.substring(6,8));
+    Serial.println(DateTime.substring(9,11));
+    Serial.println(DateTime.substring(12,14));
+    Serial.println(DateTime.substring(15,17));
   */
   temp = gsmport.readString();
   Serial.println(temp);
-  time.settime(sec,min,hour,date,month,year); 
-  String tmpt=time.gettime("d-m-Y, H:i:s");
-  inf("Time:\r\n"+tmpt);
+  time.settime(sec, min, hour, date, month, year);
+  String tmpt = time.gettime("d-m-Y, H:i:s");
+  inf("Time:\r\n" + tmpt);
 }
 
 
@@ -405,12 +507,7 @@ String ReadMasterNum () // возвращает из первой ячейки �
 }
 
 
-void mainevent() // основное событие раз в 10 секунд, отсюда вызываются другие более редкие события
-{
-  /*  refreshdisplay();
-    predtime=millis(); //запоминаем время прошедшего события
-    nexttime=predtime+10000; // назначаем время следующего основного события*/
-}
+
 
 
 void refreshdisplay()
@@ -482,9 +579,14 @@ void displaymd() //показывает на экране массив  данн
   strdf = ""; // в полном виде
   for (int i = 0; i < 10; i++)
   {
-    if (abs((millis() - md[i].time)) > 60000)
+    // Serial.println(i);
+    //Serial.println(millis());
+    //Serial.println(md[i].time);
+    if ((millis() - md[i].time) > 60000)
     {
       md[i].active = 0; // если данных от датчика не было определенное количество миллисекунд, сделаем его неактивным
+      //Serial.print("inactive ");
+      //Serial.println(i);
     }
     if (md[i].active == 1)
     {
@@ -522,18 +624,19 @@ void displaymd() //показывает на экране массив  данн
       strd = strd + "\r\n";
       strdf = strdf + "\r\n";
       strdf = strdf + "old " + String(told) + " sec\r\n";
-      //  Serial.print(strdf);
-       String tmpt=time.gettime("d-m-y H:i");
-       strd=tmpt+"\r\n"+strd; // для отладки покажем время
-      Serial.print(strd);
-      Serial.println("");
-      display.clearDisplay();
-      display.display();
-      delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
-      display.println(strd);
-      display.display();
+
     }
   }
+  //  Serial.print(strdf);
+  String tmpt = time.gettime("d-m-y H:i");
+  strd = tmpt + "\r\n" + strd; // для отладки покажем время
+  Serial.print(strd);
+  Serial.println("");
+  display.clearDisplay();
+  display.display();
+  delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
+  display.println(strd);
+  display.display();
 }
 
 void readshortdata()
@@ -576,6 +679,7 @@ void readfulldata()
 
 void parsedata() //обрабатываем массив данных от датчиков, данные в массиве data[0], количество данных datalen
 {
+  int flagmod = 0; // флаг модификации, если данные изменилиси с предыдущим приходом, то флаг взведем
   md[device_id].datalen = datalen;
   md[device_id].active = 1;
   md[device_id].time = millis();
@@ -589,12 +693,21 @@ void parsedata() //обрабатываем массив данных от да�
         temp1 = temp1 - 256;
       }
       temp1 = temp1 / 2; // было передано удвоенное значение температуры
-      md[device_id].data[i] = temp1;
+      if (abs(md[device_id].data[i] - temp1) > 0.5) //данные изменились с прошлой передачи больше чем на 0.5 градуса
+      {
+        md[device_id].data[i] = temp1;
+        flagmod = 1;
+      }
     }
+  }
+  if (flagmod == 1) // если есть изменения в данных
+  {
+    writelognumdat(device_id); // запишем данные в лог
   }
 }
 
-void displaydata()
+
+void displaydata() //показывает все пришедшие данные по радиоканалу в сначала в числовом, потом в текстовом виде,  больше нужно для отладки, вызывается, если не удалось идентифицировать посылку
 {
   int i;
   digitalWrite(13, true);
@@ -641,4 +754,115 @@ String formattemp(float ftemp) // форматирует и возвращает
   strtemp = "   " + strtemp;
   strtemp = strtemp.substring(strtemp.length() - 3); // оставим три символа справа
   return strtemp;
+}
+
+
+void event1() // основное событие раз в 10 секунд, отсюда вызываются другие более редкие события
+{
+  //здесь вероятно будем обновлять дисплей
+  Serial.println("event1");
+  // refreshdisplay();
+  predtime1 = millis(); //запоминаем время прошедшего события
+  nexttime1 = predtime1 + 10000; // назначаем время следующего основного события через 10 сек
+
+  tektime = millis();
+  if ((nexttime2 < tektime) || (predtime2 > tektime)) event2(); // вызовем если нужно второе собыитие
+
+  tektime = millis();
+  if ((nexttime3 < tektime) || (predtime3 > tektime)) event3(); // вызываем третье событие  раз в сутки обычно
+  // эту проверку можно было сделать в основном loop, но не будем грузить основной цикл лишним кодом, чтобы дать процессору больше времени на проверки приходящих данных
+}
+
+
+void event2() // второе  событие вызывается реже, обычно раз в час отсюда вызываются другие более редкие события
+{
+  Serial.println("event2");
+  predtime2 = millis(); //запоминаем время прошедшего события
+  nexttime2 = predtime2 + 3600000; // назначаем время следующего  события 2 через час (3600000 msec час)
+
+  writelogdatat(); // пишем в лог с именем файла- номер датчика+"t" данные каждй интервал времени, когда вызвано событе event2
+}
+
+void event3() // второе  событие вызывается реже, обычно раз в час отсюда вызываются другие более редкие события
+{
+  Serial.println("event3");
+  predtime3 = millis(); //запоминаем время прошедшего события
+  nexttime3 = predtime3 + 86400000; // назначаем время следующего  события 3 через это время (86400000 msec сутки)
+}
+
+
+void writelogdatat() // эта запись в лог будет вызываться по таймеру, пишем все активные датчики
+{
+  for (int i = 0; i < 10; i++)
+  {
+
+    if (md[i].active == 1)
+    {
+      String strlog = ""; //строка для записи в лог
+      String filename = "";
+      vbat = md[i].vcc; // преобразовать тип
+      vbat = vbat / 10; // пока не будем писать напр батареи
+      filename = String(i);
+      filename.trim();
+      filename = "t" + filename + ".csv"; // имя файла совпадает с именем датчика, буква t  в начале имени означает что это лого по таймеру (раз в минуту час,день)
+      String tmpt = time.gettime("YmdHis");
+      strlog = tmpt;
+      for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
+      {
+        strlog = strlog + ";" + String(md[i].data[j]);
+      }
+
+      File dataFile = SD.open(filename, FILE_WRITE);
+      // if the file is available, write to it:
+      if (dataFile)
+      {
+        dataFile.println(strlog);
+        dataFile.close();
+        // print to the serial port too:
+        Serial.println("writing log on timer: " + filename);
+        Serial.println(strlog);
+      }
+      // if the file isn't open, pop up an error:
+      else
+      {
+        Serial.println("error opening log for write");
+      }
+    }
+  }
+}
+
+
+void writelognumdat(int i) // эта запись в лог пишет датчик с номером i
+{
+
+  String strlog = "";
+  String filename = "";
+  vbat = md[i].vcc; // преобразовать тип
+  vbat = vbat / 10;
+  filename = String(i);
+  filename.trim();
+  filename = filename + ".csv"; // имя файла совпадает с именем датчика,
+  String tmpt = time.gettime("YmdHis");
+  strlog = tmpt;
+  for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
+  {
+    int itemp = round(md[i].data[j]); // в этом температуру округлим, так ка пишем в него когда темп измениться больше чем на полградуса
+    strlog = strlog + ";" + String(itemp);
+  }
+
+  File dataFile = SD.open(filename, FILE_WRITE);
+  // if the file is available, write to it:
+  if (dataFile)
+  {
+    dataFile.println(strlog);
+    dataFile.close();
+    // print to the serial port too:
+    Serial.println("writing log on modify data: " + filename);
+    Serial.println(strlog);
+  }
+  // if the file isn't open, pop up an error:
+  else
+  {
+    Serial.println("error opening log for write");
+  }
 }
