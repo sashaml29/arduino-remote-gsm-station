@@ -56,6 +56,8 @@ https://easyeda.com/normal/with_sim900-cec6111705ad414b99fb65d70da5dad2
 ава
 ывыфвфы
 ывфвыы
+вакаввавыавыфывы
+счыс
 
 
 
