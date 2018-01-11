@@ -41,7 +41,7 @@
 
 #include <SPI.h>
 #include <SD.h>
-
+#include <EEPROM.h>
 
 
 
@@ -141,12 +141,38 @@ struct record  // строка записи данных в массиве да�
 record md[10]; //массив главных данных (maindata) от датчиков, 540 байт памяти, в элементе с индексом 0 будем хранить данные основного блока, индексы 1-9 - данные удаленных датчиков, у которого может быть до 10 сенсоров
 //максимальный номер датчика 9, максимальный номер данных сенсора 9, можно кодировать данные двызначным числом, например 23 - данные третьего сенсора от второго датчика
 
+struct recordalert  // строка записи данных в массиве предупреждений
+{
+  byte alert_active = 0; // если  активен, то 1, если нет то 0
+  int numdat = 0; // номер датчика (0-9), 
+  int numsens = 0; // номер сенсора в датчике (0-9)
+  char typealert = "u"; //u при превышении порога, d при понижении порога 
+  float triggerdata; // порог - значение данны при превышении или понижении которого будет выдаваться оповещенеи
+  long int lasttimeonsent = 0; //время последней отправки оповещения, в глобальных миллисекундах
+};
+recordalert al[10]; // массив предупреждений всего 9, от 1 до 9, 0 не будем задейсттвовать
+// будем посылать смс вида #al925u35 - предупреждение номер 9, датчик 2 сенсор 3, послать сообщение  при превышении данных выше 35    
+//#al3* - дективировать предупреждение с номером 3
+//#al* - деактивировать все предупреждения
+
+long int alarmtimeout=600000; // период в милиссекундах, через которы будут посылаться сообщения при превышении порога датчика
+String stringactivealert; // строка обратного ответа о всех активных предупреждениях
+
+
 
 void setup() {
   wdt_disable();
   Serial.begin(9600);
   delay(500);
-
+  EEPROM.get(100, al); // считаем содержимое массива уведомлений из еепром
+  for (int i = 1; i <= 9 ; i++) 
+   {
+    al[i].lasttimeonsent=0; // после рестарата содержимое милис обнуляется, потому обнулим данные о последнем времени посылке предупреждения
+   }
+    
+  printactivealert(); // процедура пишет в переменную stringactivealert содержимое активных предупреждений
+  inf(stringactivealert);
+  stringactivealert=""; 
   display.begin();
   display.setContrast(65);
   time.begin();
@@ -264,6 +290,10 @@ void loop()
         Serial.println("Not deleted!");
       }
     }
+    else if (txt.substring(0, 3) == "#al") 
+    {
+      setalert(txt);
+    }
   };
   checkforsms(); // проверяем буфер порта модема  на наличе данных и смс в нем
 
@@ -297,6 +327,7 @@ void checkforsms()
         if (val.indexOf("#settime") > -1) settimedatefromsms();
         if (val.indexOf("#setmynum") > -1) setmynumber();
         if (val.indexOf("#balans") > -1) sendbalans();
+        if (val.indexOf("#al") > -1) setalert(val);
       }
     }
     else
@@ -569,11 +600,11 @@ void readremotedata()
     }
     readfulldata();
   }
-  displaymd();
+  displaymd(); // не только показыват , но и формирует глобальные строки  strd   strdf 
 }
 
 
-void displaymd() //показывает на экране массив  данных
+void displaymd() //показывает на экране массив  данных, здесь еще формируются строки для посылки смс 
 {
   strd = ""; //в коротком виде
   strdf = ""; // в полном виде
@@ -592,28 +623,7 @@ void displaymd() //показывает на экране массив  данн
     {
       vbat = md[i].vcc; // преобразовать тип
       vbat = vbat / 10;
-      long int told = (millis() - md[i].time) / 1000;
-      /*
-         Serial.print("Device ");
-         Serial.print(i);
-         Serial.print(" ");
-         Serial.print(md[i].dname);
-         Serial.print(" ");
-         Serial.print("type ");
-         Serial.print(md[i].device_type);
-         Serial.println(":");
-         Serial.print("Time old ");
-         Serial.println(told);
-         Serial.print("vcc: ");
-         Serial.print(md[i].symbolvcc);
-         Serial.print(" ");
-         Serial.println(vbat);
-         Serial.print("data ");
-         Serial.println(md[i].data[0]);
-         Serial.println("");
-
-      */
-      //
+      long int told = (millis() - md[i].time) / 1000;      
       strd = strd + md[i].dname;
       strdf = strdf + String(i) + " " + md[i].dname + " Ty" + String(md[i].device_type) + " " + md[i].symbolvcc + String(vbat) + "\r\n";
       for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
@@ -630,8 +640,8 @@ void displaymd() //показывает на экране массив  данн
   //  Serial.print(strdf);
   String tmpt = time.gettime("d-m-y H:i");
   strd = tmpt + "\r\n" + strd; // для отладки покажем время
-  Serial.print(strd);
-  Serial.println("");
+ // Serial.print(strd);
+  // Serial.println("");
   display.clearDisplay();
   display.display();
   delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
@@ -761,9 +771,10 @@ void event1() // основное событие раз в 10 секунд, от
 {
   //здесь вероятно будем обновлять дисплей
   Serial.println("event1");
+  checkalerts(); // проверим датчики на срабатывание по порогу
   // refreshdisplay();
   predtime1 = millis(); //запоминаем время прошедшего события
-  nexttime1 = predtime1 + 10000; // назначаем время следующего основного события через 10 сек
+  nexttime1 = predtime1 + 20000; // назначаем время следующего основного события через 20 сек
 
   tektime = millis();
   if ((nexttime2 < tektime) || (predtime2 > tektime)) event2(); // вызовем если нужно второе собыитие
@@ -865,4 +876,204 @@ void writelognumdat(int i) // эта запись в лог пишет датч�
   {
     Serial.println("error opening log for write");
   }
+}
+
+
+
+// будем посылать смс вида #al925u35 - предупреждение номер 9, датчик 2 сенсор 3, послать сообщение  при превышении данных выше 35    
+//#al3* - дективировать предупреждение с номером 3
+//#al* - деактивировать все предупреждения
+//#all - вывести список всех предупреждениий
+void setalert(String instring)
+{
+ String outstring="";
+ Serial.println("Set alert");
+ int n=instring.indexOf("#al");
+ if (n > -1)
+ {
+   instring=instring.substring(n);
+ }
+ Serial.println(instring);
+ if (instring.substring(3,4)=="*")
+ {
+ Serial.println("deactivate all alert");   
+ for (int i = 1; i <= 9 ; i++) 
+   {
+   al[i].alert_active=0;
+   }
+  EEPROM.put(100, al);
+  printactivealert();
+  Serial.println(stringactivealert);
+  sendmessage(mynumber, stringactivealert);
+  stringactivealert=""; 
+ return;
+ }
+  if (instring.substring(3,4)=="l")
+ {
+ Serial.println("list all alert");   
+  printactivealert();
+  Serial.println(stringactivealert);
+  sendmessage(mynumber, stringactivealert);
+  stringactivealert=""; 
+  
+ return;
+ }
+ int alertnum=instring.substring(3,4).toInt();
+ Serial.print("alertnum: ");
+  Serial.println(alertnum);
+  if ((alertnum>9) || (alertnum<1)) 
+  {
+    Serial.print("wrong alertnum");
+    return;
+  }
+ if (instring.substring(4,5)=="*")
+ {
+ Serial.println("deactivate alert");
+ Serial.println(alertnum); 
+ al[alertnum].alert_active=0;
+  EEPROM.put(100, al);
+  printactivealert();
+  Serial.println(stringactivealert);
+  sendmessage(mynumber, stringactivealert);
+  stringactivealert=""; 
+ return;
+ }
+ int datnum=instring.substring(4,5).toInt();
+   if ((alertnum>9) || (alertnum<0))
+   {
+    Serial.print("wrong datnum");
+    Serial.println(datnum); 
+    return;
+  }
+  int sensnum=instring.substring(5,6).toInt();
+   if ((sensnum>9) || (sensnum<0))
+   {
+    Serial.print("wrong sensnum");
+    Serial.println(sensnum); 
+    return;
+  }
+ String typealert=instring.substring(6,7);
+  if (!((typealert=="d") || (typealert=="u")))
+   {
+    Serial.print("wrong typealert");
+    Serial.println(typealert); 
+    return;
+  }
+    float triggerdata=instring.substring(7).toFloat();
+   if ((triggerdata>200) || (triggerdata<-200))
+   {
+    Serial.print("wrong triggerdata");
+    Serial.println(triggerdata); 
+    return;
+  }
+   Serial.print("Setting alert: ");
+   String stringsetalert;
+   String stringalertnum=String(alertnum);
+   stringalertnum.trim();
+   String stringdatnum=String(datnum);
+   stringdatnum.trim();
+   String stringsensnum=String(sensnum);
+   stringsensnum.trim();
+   String stringtriggerdata=String(triggerdata);
+   stringtriggerdata.trim();
+   stringsetalert="#al"+stringalertnum+stringdatnum+stringsensnum+typealert+stringtriggerdata;
+   Serial.println(stringsetalert);
+   al[alertnum].alert_active=1;
+   al[alertnum].numdat=datnum;
+   al[alertnum].numsens=sensnum;
+   al[alertnum].typealert=typealert[0];
+   al[alertnum].triggerdata=triggerdata;
+   al[alertnum].lasttimeonsent=0;
+ EEPROM.put(100, al);
+  printactivealert();
+  Serial.println(stringactivealert);
+  sendmessage(mynumber, stringactivealert);
+  stringactivealert=""; 
+   
+}
+
+void printactivealert()
+{
+ stringactivealert="";
+   for (int i = 1; i <= 9 ; i++) 
+   {
+   if (al[i].alert_active==1)
+   {
+   String stringsetalert;
+   String stringalertnum=String(i);
+   stringalertnum.trim();
+   String stringdatnum=String(al[i].numdat);
+   stringdatnum.trim();
+   String stringsensnum=String(al[i].numsens);
+   stringsensnum.trim();
+   String stringtriggerdata=String(al[i].triggerdata);
+   stringtriggerdata.trim();
+   stringsetalert="#al"+stringalertnum+stringdatnum+stringsensnum+al[i].typealert+stringtriggerdata;
+   stringactivealert=stringactivealert+stringsetalert+"\r\n";
+   }
+     
+   }
+   if (stringactivealert=="")
+   {
+     stringactivealert="no active alert";
+   }
+   stringactivealert="Active alert: \r\n"+stringactivealert;
+   
+}
+
+
+void checkalerts() // проверяет значения датчиков на превышение или понижение относительно порога и отправляет смс
+{
+   
+   
+   for (int i = 1; i <= 9 ; i++) 
+   {
+    int numdat=al[i].numdat;
+    int numsens=al[i].numsens;
+    float triggerdata=al[i].triggerdata;
+    int alert_active= al[i].alert_active;
+    char typealert=al[i].typealert;
+    long int lasttimeonsent = al[i].lasttimeonsent;
+    long int currtime=millis();
+    
+     int needsend=0; // нужно или нет послать сообщение
+     if (alert_active==1)
+     {
+      /* Serial.println(numdat);
+       Serial.println(numsens);
+       Serial.println(md[numdat].data[numsens]);
+       Serial.println(triggerdata); */
+       if (typealert=='u' ) // превышение порога
+       {
+        if (md[numdat].data[numsens]>triggerdata)
+        {
+          needsend=1;
+        }
+       
+       }
+       if (typealert=='d' ) // понижение порога
+       {
+       if (md[numdat].data[numsens]<triggerdata)
+        {
+          needsend=1;
+        }
+       }
+       long int needtime=lasttimeonsent+alarmtimeout;
+      // Serial.println(needtime);
+      // Serial.println(currtime);
+       if ((needtime>currtime) &&( lasttimeonsent!=0)) // чтобы не посылать предуперждения слишком часто , задаим период посылки
+       {
+         needsend=0; // если предупреждение сработало, но  время еще не подошло и не было ребута , то не посылаем
+       }
+       if (needsend==1)
+       {
+         String textalarm="Alarm on device_id:"+ String(numdat)+"  "+md[numdat].dname+"\r\n"+"sensor:" + String(numsens) +"\r\n"+"data: "+ String (md[numdat].data[numsens]) +"\r\n"+"trigger:"+String(triggerdata);
+         inf (textalarm);
+        sendmessage(mynumber, textalarm);
+         al[i].lasttimeonsent=currtime;
+         
+         
+       }
+      }
+   }
 }
