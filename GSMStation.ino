@@ -108,7 +108,9 @@ String textsms, number, txt, strd, strdf;
 String mynumber;
 String temp;
 int debugstatus = 1;
-unsigned long predtime1, nexttime1, predtime2, nexttime2, predtime3, nexttime3,  tektime; // счетчики времени для вызова периодических событий
+unsigned long predtime1, nexttime1;
+unsigned long predtime2, nexttime2;
+unsigned long predtime3, nexttime3,  tektime; // счетчики времени для вызова периодических событий
 String val = ""; //глобальная переменная где храним строку с модема, чотбы не создавать лишний string в вызываемых процедурах
 int enableset;
 uint8_t buf[VW_MAX_MESSAGE_LEN]; //принятое неразобранное сообщение
@@ -155,7 +157,7 @@ recordalert al[10]; // массив предупреждений всего 9, �
 //#al3* - дективировать предупреждение с номером 3
 //#al* - деактивировать все предупреждения
 
-long int alarmtimeout=600000; // период в милиссекундах, через которы будут посылаться сообщения при превышении порога датчика
+long int alarmtimeout=3600000; // период в милиссекундах, через которы будут посылаться сообщения при превышении порога датчика
 String stringactivealert; // строка обратного ответа о всех активных предупреждениях
 
 
@@ -224,8 +226,8 @@ void setup() {
   vw_rx_start();
   predtime1 = 0;
   nexttime1 = 0;
-  predtime2 = 0;
-  nexttime2 = 0;
+  predtime2 = 0; 
+  nexttime2 = 3000000; // второе событие вызовется первый раз через пять минут после старта (для записи  лог - когда данные с датчиков придут)
   predtime3 = 0;
   nexttime3 = 0;
   wdt_enable (WDTO_8S); // watchdog на 8 секунд, родной загрузчик ардуино должен быть обязательно заменен на otiboot, иначе будет циклическая перезагрузка
@@ -293,6 +295,10 @@ void loop()
     else if (txt.substring(0, 3) == "#al") 
     {
       setalert(txt);
+    }
+    else if (txt.substring(0, 6) == "listmd") //показ содержимого основного массива
+    {
+      listmd();
     }
   };
   checkforsms(); // проверяем буфер порта модема  на наличе данных и смс в нем
@@ -770,7 +776,7 @@ String formattemp(float ftemp) // форматирует и возвращает
 void event1() // основное событие раз в 10 секунд, отсюда вызываются другие более редкие события
 {
   //здесь вероятно будем обновлять дисплей
-  Serial.println("event1");
+// Serial.println("event1");
   checkalerts(); // проверим датчики на срабатывание по порогу
   // refreshdisplay();
   predtime1 = millis(); //запоминаем время прошедшего события
@@ -816,7 +822,7 @@ void writelogdatat() // эта запись в лог будет вызыват�
       filename = String(i);
       filename.trim();
       filename = "t" + filename + ".csv"; // имя файла совпадает с именем датчика, буква t  в начале имени означает что это лого по таймеру (раз в минуту час,день)
-      String tmpt = time.gettime("YmdHis");
+      String tmpt = time.gettime("d-m H:i:s");
       strlog = tmpt;
       for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
       {
@@ -853,7 +859,7 @@ void writelognumdat(int i) // эта запись в лог пишет датч�
   filename = String(i);
   filename.trim();
   filename = filename + ".csv"; // имя файла совпадает с именем датчика,
-  String tmpt = time.gettime("YmdHis");
+  String tmpt = time.gettime("d-m H:i:s");
   strlog = tmpt;
   for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
   {
@@ -1076,4 +1082,39 @@ void checkalerts() // проверяет значения датчиков на 
        }
       }
    }
+}
+
+void listmd() //выводит в консоль основной массив данных md
+{
+ for (int i = 0; i <= 9 ; i++) 
+   { 
+     Serial.print("Device N:");
+     Serial.print(i);
+     Serial.print(" name:");
+     Serial.print(md[i].dname);
+     Serial.print(" type:");
+     Serial.println(md[i].device_type);
+     Serial.print("Active:");
+     Serial.println(md[i].device_type);
+     long int curtime=millis();
+     long int tmold=(curtime-md[i].time)/1000;
+     Serial.print("time old ");
+     Serial.print(tmold);
+     Serial.println(" sec");
+     float vccbatt=float(md[i].vcc)/10;
+     Serial.print("Vcc ");
+     Serial.print(vccbatt);
+     Serial.print(" ");
+     Serial.println(md[i].symbolvcc);
+     Serial.print("Data len:");
+     Serial.print(md[i].datalen);
+     Serial.println(" ,  data:");
+     for (int j = 0; j < datalen ; j++) 
+     { 
+       Serial.print(md[i].data[j]);
+       Serial.print(" ");
+      }
+   Serial.println("");
+      Serial.println("");
+    }
 }
