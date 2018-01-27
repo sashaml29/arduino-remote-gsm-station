@@ -6,3 +6,5 @@
 
 схемы
 https://easyeda.com/sasha_ml/arduino_with_lcd_and_rfmodule-15622ccd768a4618abc1057a1459d12f
+
+recivtestlowpower.ino	приемник на батарейках, сбор данных с радиомодулей и передача на narodmon через esp8266
