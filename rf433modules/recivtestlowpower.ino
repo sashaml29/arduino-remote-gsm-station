@@ -205,10 +205,15 @@ void readsensors()
     if (totaltime < 0) totaltime = -totaltime;
     if (SoftSerialHC.available()) //если модуль что-то послал
     {
-      val = SoftSerialHC.readString();
-      Serial.println("Recived  from HC");
-      Serial.println(val);
-      beep();
+      buflen = SoftSerialHC.readBytes(buf,64); //прочитаем не более 64 символов
+      Serial.print("Recived  from HC: ");
+      for (int i = 0; i < buflen; i++)
+      {
+        Serial.print(buf[i], DEC);
+        Serial.print(" ");
+      }
+      readremotedata();
+   //   beep();
     }
     buflen = VW_MAX_MESSAGE_LEN; // обязательно присвоить перед вызовом vw_get_message, иначе переменная меняется
     if (vw_get_message(buf, &buflen)) // Non-blocking
