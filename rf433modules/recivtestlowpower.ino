@@ -16,6 +16,7 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(10, 9, 19);
 // and written to during SPI transfer.  Be careful sharing these pins!
 #include <OneWire.h>
 SoftwareSerial SoftSerial(5, 6); // RX, TX
+SoftwareSerial SoftSerialHC(15, 16); // RX, TX
 int Temp; //температура, считанная с 18dsb20
 const int receive_pin = 2; // пин приемника
 #define POWERRECIVPIN 3 // пин питания приемника он же питание дисплея
@@ -42,7 +43,7 @@ struct record  // строка записи данных в массиве да�
   byte vcc = 0; //напр батареи, умноженное на 10
   byte device_type = 0; //тип датчика
   byte datalen; //количество дананных
-  byte data[10]; //сами данные
+  byte data[5]; //сами данные надо 10
 
 };
 record md[10];
@@ -81,10 +82,12 @@ void setup() {
   Serial.begin(9600);
   vw_set_rx_pin(receive_pin);
   vw_set_ptt_inverted(true); // Required for DR3100
-  vw_setup(2000);
+  vw_setup(2400);
   vw_rx_start();
   Serial.println("Start sketch");
   SoftSerial.begin(9600);
+  SoftSerialHC.begin(2400);
+  SoftSerialHC.setTimeout(100);
   vcc = readVcc();
   char ch = ' ';
   while (Serial.available()) // чистим буфер приема
@@ -96,6 +99,8 @@ void setup() {
   Serial.print("t");
   delay(4000);
   ch = Serial.read(); //если rx и tx замкнуты или с консоли в течениие четырех секунд послали букву t - войдем в режим тестировани- непрерывное чтение данных без передачи и перехода в режим сна
+  ch = 't';
+
   Serial.print(ch);
   if (ch == 't')
   {
@@ -178,6 +183,7 @@ void loop()
 
 void readsensors()
 {
+  String val;
   display.begin();
   display.setContrast(60);
   display.clearDisplay();
@@ -197,6 +203,13 @@ void readsensors()
   {
     totaltime = millis() - starttime;
     if (totaltime < 0) totaltime = -totaltime;
+    if (SoftSerialHC.available()) //если модуль что-то послал
+    {
+      val = SoftSerialHC.readString();
+      Serial.println("Recived  from HC");
+      Serial.println(val);
+      beep();
+    }
     buflen = VW_MAX_MESSAGE_LEN; // обязательно присвоить перед вызовом vw_get_message, иначе переменная меняется
     if (vw_get_message(buf, &buflen)) // Non-blocking
     {
@@ -462,4 +475,3 @@ void readlocaldata()
 
   если сократим время передачи до 2 сек, то получим 40 дней при 5 минутном цикле
 */
-
