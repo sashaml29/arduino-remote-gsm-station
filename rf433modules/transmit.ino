@@ -28,7 +28,6 @@ byte data_temp3; // посылаемый байт температуры, цел
 int t; // температурв с dht
 int h; //влажность с dht
 byte msg[40]; //массив для отсылки данных
-String msgprint;
 int j = 0; //счетчик основного цикла
 OneWire ds1(3); // датчик 18ds20 на 3 пине
 OneWire ds2(8); //
@@ -247,7 +246,7 @@ void sendshort() // передача данных в сокращенном ви
   encrypt(1 + dscount); // так шифруем передачу данные дублируются в обратном порядке, на приемной стороне так убедимся, что это наша передача и заодно удостоверимся в корректности данных, посылаем вдвое больше символов сообщения, чем было исходных
   // vw_send((uint8_t *)msg, (1 + dscount) * 2);
   // vw_wait_tx(); // ждем  икончания передачи
-  sendhc12();
+  sendhc12((1 + dscount) * 2);
   
 }
 
@@ -274,7 +273,7 @@ void sendfull() // полная посылка данных с именем да
   encrypt(8 + dscount);
   //vw_send((uint8_t *)msg, (8 + dscount) * 2);
  // vw_wait_tx(); // ждем  икончания передачи
-  sendhc12();
+  sendhc12((8 + dscount) * 2);
   digitalWrite(POWERTRANSMITTERPIN, LOW); //выключим питание передатчика
   digitalWrite(LEDPIN, false); //гасим диод
 }
@@ -284,11 +283,6 @@ void encrypt(int len) //шифруем массив msg длиной len, доа
   for (int i = 0; i < len; i++)
   {
     msg[len + i] = msg[len - i - 1];
-  }
-  msgprint = "";
-  for (int i = 0; i < len * 2; i++)
-  {
-   msgprint = msgprint + char(msg[i]);
   }
 }
 
@@ -304,13 +298,12 @@ void writefirstdataeeprom()
 }
 
 
-void sendhc12()
+void sendhc12(int len) //посылает байты из глобального массива msg длиной len
 {
   digitalWrite(HC12SET, LOW); //hc 12 в настроечном
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме - дернем ногу чтоб модуль проснулся
   delay(50);// время для просыпания
- // SoftSerial.print("tstsenduytuyyutuytuyktkytkutu5");
-  SoftSerial.print(msgprint);
+  SoftSerial.write(msg,len);
   SoftSerial.flush();
   delay(50); //время для передачи данных радиомодулем
   digitalWrite(HC12SET, LOW); //hc 12 в настроечном
