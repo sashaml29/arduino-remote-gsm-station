@@ -1,4 +1,4 @@
-#include <avr/wdt.h>  // watchdog
+//#include <avr/wdt.h>  // watchdog
 #include "DHT.h"
 #include <LowPower.h>
 #include <VirtualWire.h>
@@ -15,30 +15,30 @@
 Adafruit_PCD8544 display = Adafruit_PCD8544(10, 9, 19);
 // Note with hardware SPI MISO and SS pins aren't used but will still be read
 // and written to during SPI transfer.  Be careful sharing these pins!
-#include <OneWire.h>
+//#include <OneWire.h>
 SoftwareSerial SoftSerial(5, 6); // RX, TX
 #define HC12SET 7  // управление режимом hc12
 SoftwareSerial SoftSerialHC(15, 16); // RX, TX
-int Temp; //температура, считанная с 18dsb20
-const int receive_pin = 2; // пин приемника
+//int Temp; //температура, считанная с 18dsb20
+#define receive_pin  2 // пин приемника
 #define POWERRECIVPIN 3 // пин питания приемника он же питание дисплея
 #define POWERESP 4 // пин питания ESP8266 (через транзистор)
 #define BEEPPIN 18 // пин пищалки
 int s = 0;
 long int mm, msec;
 float vcc;
-String strout;
-String strout_tmp;
+//String strout;
+//String strout_tmp;
 uint8_t buf[VW_MAX_MESSAGE_LEN]; //принятое неразобранное сообщение
 uint8_t buflen = VW_MAX_MESSAGE_LEN; //его длина
-byte msg[30]; //принятое расшифрованное сообщение
-int len; // его длина
-int datalen; //  длина данных - количество значений данных
-int  device_id; // идентификатор (номер) датчика,
+byte msg[20]; //принятое расшифрованное сообщение 8 байт служ данных и  9 байт датчиков максимум
+byte len; // его длина
+byte datalen; //  длина данных - количество значений данных
+byte  device_id; // идентификатор (номер) датчика,
 byte data[5]; // принятые данные от сенсоров датчика
-int  device_type ; // тип датчика
+byte  device_type ; // тип датчика
 byte testmode = 0;
-float flvcc;
+
 //OneWire ds(17); // датчик 18ds20 на 17 пине
 #define DHTPIN 17
 #define DHTTYPE DHT22
@@ -53,24 +53,24 @@ extern void *__brkval;
 
 struct record  // строка записи данных в массиве датчиков
 {
-  byte active = 0; // если датчик активен, то 1, если нет то 0
   byte vcc = 0; //напр батареи, умноженное на 10
   byte device_type = 0; //тип датчика
-  byte datalen; //количество дананных
+  byte datalen = 0; //количество байт дананнх от датчика
   byte data[5]; //сами данные надо 10
-
 };
+
 record md[10];
-float vbat; // напряжение батареи
+
+//float vbat; // напряжение батареи
 float temp1; // временное значение температуры
 float Temperature;
 float hum = 0;
-int watchdogenabled = 0;
+//int watchdogenabled = 0;
 
 void setup() {
   pinMode(HC12SET, OUTPUT);
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме
-  delay(100); 
+  delay(100);
   pinMode(POWERRECIVPIN, OUTPUT);
   pinMode(POWERESP, OUTPUT);
   pinMode(BEEPPIN, OUTPUT);
@@ -82,7 +82,7 @@ void setup() {
   display.display(); // show splashscreen
   delay(500);
   display.clearDisplay();
-  display.println("Starting...");
+  display.println("Strt");
   display.display();
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);
@@ -102,16 +102,17 @@ void setup() {
   vw_set_ptt_inverted(true); // Required for DR3100
   vw_setup(2400);
   vw_rx_start();
-  Serial.println("Start sketch");
+  Serial.println("Strt");
   SoftSerial.begin(9600);
   SoftSerialHC.begin(2400);
-  SoftSerialHC.setTimeout(100);
- digitalWrite(HC12SET, LOW); //hc 12 в настроечном
-  delay(100); //время чтобы войти в настроечный режим
-  SoftSerialHC.println("AT+FU1");
-  delay(100); //время для того чтобы принять команду 
-  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме 
-  
+  // переход в FU2 надо делать только один раз
+  /*  SoftSerialHC.setTimeout(100);
+    digitalWrite(HC12SET, LOW); //hc 12 в настроечном
+    delay(100); //время чтобы войти в настроечный режим
+    SoftSerialHC.println("AT+FU1");
+    delay(100); //время для того чтобы принять команду
+    digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме
+  */
   vcc = readVcc();
   char ch = ' ';
   while (Serial.available()) // чистим буфер приема
@@ -123,7 +124,7 @@ void setup() {
   Serial.print("t");
   delay(4000);
   ch = Serial.read(); //если rx и tx замкнуты или с консоли в течениие четырех секунд послали букву t - войдем в режим тестировани- непрерывное чтение данных без передачи и перехода в режим сна
- // ch = 't';// принудительно в testmode
+  // ch = 't';// принудительно в testmode
 
   Serial.print(ch);
   if (ch == 't')
@@ -132,14 +133,13 @@ void setup() {
     digitalWrite(POWERRECIVPIN, HIGH);
     digitalWrite(POWERESP, HIGH);
     display.clearDisplay();
-    display.println("test mode:");
-    Serial.println("testmode:");
-    strout = "";
+    display.println("tst:");
+    Serial.println("tst:");
+    //  strout = "";
     readlocaldata();
-    strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
+    //    strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
     display.display();
     while (1 == 1) readsensors();
-
   }
 }
 
@@ -154,47 +154,40 @@ void loop()
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме - дернем ногу чтоб модуль проснулся
   delay(100);// время для просыпания
   digitalWrite(POWERRECIVPIN, HIGH);
-  Serial.println("Read sensors...");
-  strout = "";
+  //  strout = "";
   readlocaldata();
-  strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
+  // strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
   readsensors();
   display.clearDisplay();
-  display.println("Sending data:");
+  display.println("Send:");
   display.display();
   digitalWrite(POWERESP, HIGH);
   delay(1000); // всего задержка перед сатртом esp 4 сек, 1 сек стартуем чтобы померить напряжение питания
-  flvcc=readVcc();
-    Serial.println(strout_tmp);
-      Serial.println(strout);
-  strout = strout + "&U0=" + String(flvcc);
-      Serial.println(strout_tmp);
-      Serial.println(strout);
-      Serial.println(memoryFree());
-  strout = strout + strout_tmp;
+  vcc = readVcc();
+  //    Serial.println(strout_tmp);
+  //      Serial.println(strout);
+  // strout = strout + "&U0=" + String(vcc);
+  //     Serial.println(strout_tmp);
+  //     Serial.println(strout);
 
-   Serial.println(memoryFree());
-  display.println(strout);
-   Serial.println(memoryFree());
-
-   Serial.println(memoryFree());
   display.display();
-   Serial.println(memoryFree());
+
   //3.2 и 0.1  работает - нижний предел при котором возможна передача
   //оставляем 4 и 0.5 итого 4.5 сек не передачу данных от ESP
   delay(3000);
-  Serial.println("Sending data:");
-  Serial.println(strout);
-  SoftSerial.println(strout);
+  Serial.println("Send:");
+  displaymd(1);
+  // Serial.println(strout);
+  // SoftSerial.println(strout);
   digitalWrite(HC12SET, LOW); //hc 12 в настроечном
   delay(100); //время чтобы войти в настроечный режим
   SoftSerialHC.println("AT+SLEEP");// усыпим hc12
   delay(100); //время для того чтобы принять команду спячкм
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме для спячки
   delay(500);
-  Serial.println("ESP to sleep");
+  Serial.println("E sle");
   display.clearDisplay();
-  display.println("ESP to sleep");
+  display.println("E sle");
   display.display();
   delay(100);
   digitalWrite(POWERESP, LOW);
@@ -205,10 +198,10 @@ void loop()
   digitalWrite(9, LOW);
   digitalWrite(19, LOW);
   digitalWrite(BEEPPIN, LOW);
-LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+  //LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
 
-  /*for (int  i = 0; i < 6; i++) // сколько минут
-  {
+  for (int  i = 0; i < 6; i++) // сколько минут
+    {
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
@@ -218,8 +211,8 @@ LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     //64 секунды примерно минута
-  }
-*/
+    }
+  
 
 
 }
@@ -227,13 +220,13 @@ LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
 
 void readsensors()
 {
-  String val;
+
   display.begin();
   display.setContrast(60);
   display.clearDisplay();
-  display.println("read sensors:");
-  display.println(strout);
-  display.println(strout_tmp);
+  display.println("sens:");
+  // display.println(strout);
+  // display.println(strout_tmp);
   display.display();
 
 
@@ -242,19 +235,19 @@ void readsensors()
 
   for (int i = 0; i < 10; i++)  // чистим массив основных данных
   {
-    md[i].active = 0;
+    md[i].datalen = 0;
     md[i].vcc = 0;
 
   }
-    Serial.println("Start read sensors:");
-  while (totaltime < 1000)
+  Serial.println("sens:");
+  while (totaltime < 40000)
   {
     totaltime = millis() - starttime;
     if (totaltime < 0) totaltime = -totaltime;
     if (SoftSerialHC.available()) //если модуль что-то послал
     {
       buflen = SoftSerialHC.readBytes(buf, 40); //прочитаем не более 100 символов
-      Serial.print("Recived  from HC: ");
+      Serial.print("HC: ");
       for (int i = 0; i < buflen; i++)
       {
         Serial.print(buf[i], DEC);
@@ -304,7 +297,7 @@ void readremotedata()
 {
   if (((buflen % 2) > 0) || (buflen < 4)) // если длина сообщения нечетная или меньше 45 байт -оно не наше - покажем данные и вернемся
   {
-    Serial.print("Not valid data: ");
+    Serial.print("NV: ");
     displaydata();
     return;
   }
@@ -317,14 +310,14 @@ void readremotedata()
     }
     else
     {
-      Serial.print("Error in data: ");
+      Serial.print("Era: ");
       displaydata();
       return;
     }
   }
   if (buf[0] > 200)
   {
-    Serial.print("Error number device: ");
+    Serial.print("Erd: ");
     Serial.println(buf[0]);
     displaydata();
     return;
@@ -337,26 +330,48 @@ void readremotedata()
   {
     readfulldata();
   }
-  displaymd(); // не только показыват , но и формирует глобальные строки  strd   strdf
+  displaymd(0); // не только показыват , но и формирует глобальные строки  strd   strdf
 }
 
-void displaymd() //показывает на экране массив  данных, здесь еще формируются строки для посылки на внешний сервер
+void displaymd(byte flagesp) //показывает на экране массив  данных, здесь еще формируются строки для посылки на внешний сервер, flagesp =1 значит передавать данные через esp8266
 {
+  String strout;
+  Serial.println("");
 
-  strout_tmp = "";
+  display.clearDisplay();
+  delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
+  display.display();
+
+  strout = "&U0=" + String(vcc) + "&T01=" + String(Temperature) + "&H01=" + String(hum);
+  Serial.print(strout);
+  display.print(strout);
+  if (flagesp == 1)
+  {
+    SoftSerial.print(strout);
+  }
+
+  //  strout_tmp = "";
   for (int i = 0; i < 10; i++)
   {
     // Serial.println(i);
     //Serial.println(millis());
     //Serial.println(md[i].time);
 
-    if (md[i].active == 1)
+    if (md[i].datalen > 0) // датчик активен если число данных больше 0
     {
+      float vbat;
       vbat = md[i].vcc; // преобразовать тип
       vbat = vbat / 10;
       if (vbat != 0)
       {
-        strout_tmp = strout_tmp + "&U" + String(i) + "=" + String(vbat);
+        // strout_tmp = strout_tmp + "&U" + String(i) + "=" + String(vbat);
+          strout = "&U" + String(i) + "=" + String(vbat);
+          Serial.print(strout);
+          display.print(strout);
+          if (flagesp == 1)
+          {
+            SoftSerial.print(strout);
+          }       
       }
       for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
       {
@@ -368,37 +383,56 @@ void displaymd() //показывает на экране массив  данн
           1-первый сенор влажности, остальные - однобайтные температуры
           2-первый и второй сенсор влажности, остальные- однобайтная температура
         */
-        if ((device_type == 0) || ((device_type == 1) && (j > 0)) || ((device_type == 2) && (j > 1))) 
+        if ((device_type == 0) || ((device_type == 1) && (j > 0)) || ((device_type == 2) && (j > 1)))
         {
           if (temp1 > 127) // старший бит=1 , значит орицательная температура
           {
             temp1 = temp1 - 256;
           }
           temp1 = temp1 / 2; // было передано удвоенное значение температуры
-          strout_tmp = strout_tmp + "&T" + String(i) + String(j + 1) + "=" + String(temp1);
+          // strout_tmp = strout_tmp + "&T" + String(i) + String(j + 1) + "=" + String(temp1);
+
+          strout = "&T" + String(i) + String(j + 1) + "=" + String(temp1);
+          Serial.print(strout);
+          display.print(strout);
+          if (flagesp == 1)
+          {
+            SoftSerial.print(strout);
+          }
+
         }
         if  (((device_type == 1) && (j < 1)) || ((device_type == 2) && (j < 2)))
         {
-          strout_tmp = strout_tmp + "&H" + String(i) + String(j + 1) + "=" + String(md[i].data[j]); // влажность передается в одном байте как есть
+          // strout_tmp = strout_tmp + "&H" + String(i) + String(j + 1) + "=" + String(md[i].data[j]); // влажность передается в одном байте как есть
+          strout = "&H" + String(i) + String(j + 1) + "=" + String(md[i].data[j]);
+          Serial.print(strout);
+          display.print(strout);
+          if (flagesp == 1)
+          {
+            SoftSerial.print(strout);
+          }
         }
       }
     }
 
   }
 
-  Serial.println(strout);
-  Serial.println(strout_tmp);
-  display.clearDisplay();
-  delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
-  display.display();
+  //  Serial.println(strout);
+  //  Serial.println(strout_tmp);
+
   if (testmode == 1)
   {
-    display.print("tst ");
     beep();
   }
-  display.println(strout);
-  display.println(strout_tmp);
+  //display.println(strout);
+  //display.println(strout_tmp);
   display.display();
+  Serial.println("");
+
+  if (flagesp == 1)
+  {
+    SoftSerial.println("");
+  }
 }
 
 void beep()
@@ -429,10 +463,7 @@ void readfulldata()
   int did_type = msg[0] - 100; // идентификатор (номер) датчика в длинной посылке увеличен на 100,
   device_id = did_type % 10;// остаток от деления на 10, младший знак это номер датчика
   device_type = did_type / 10;
-  vcc = msg[7];
-  md[device_id].vcc = vcc;
-  vbat = vcc; // преобразовать тип
-  vbat = vbat / 10;
+  md[device_id].vcc = msg[7];
   datalen = len - 8; // 8 байт с 0 по 7 служебных данных
   for (int i = 8; i < len; i++)
   {
@@ -447,7 +478,6 @@ void parsedata() //обрабатываем массив данных от да�
 
   md[device_id].device_type = device_type;
   md[device_id].datalen = datalen;
-  md[device_id].active = 1;
   for (int i = 0; i < datalen; i++)
   {
     md[device_id].data[i] = data[i];
@@ -463,7 +493,7 @@ void displaydata() //показывает все пришедшие данные
   delay(200);
   digitalWrite(13, false); // мигнем диодом если хоть что-то приняли
   String tmp = "";
-  Serial.print("Got: ");
+  Serial.print("RF: ");
   display.clearDisplay();
   display.display();
   delay(100);  // мигнем пустым дисплеем, чтобы показать, что программа работает
@@ -525,12 +555,12 @@ void readlocaldata()
 
 int memoryFree()
 {
-   int freeValue;
-   if((int)__brkval == 0)
-      freeValue = ((int)&freeValue) - ((int)&__bss_end);
-   else
-      freeValue = ((int)&freeValue) - ((int)__brkval);
-   return freeValue;
+  int freeValue;
+  if ((int)__brkval == 0)
+    freeValue = ((int)&freeValue) - ((int)&__bss_end);
+  else
+    freeValue = ((int)&freeValue) - ((int)__brkval);
+  return freeValue;
 }
 
 /* расчет энергосбережения если 1 мин читаем данные 6 сек посылаем и 5 мин спим
