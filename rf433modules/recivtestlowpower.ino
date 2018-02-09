@@ -1,4 +1,5 @@
 #include <avr/wdt.h>  // watchdog
+#include "DHT.h"
 #include <LowPower.h>
 #include <VirtualWire.h>
 #include <SoftwareSerial.h>
@@ -16,6 +17,7 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(10, 9, 19);
 // and written to during SPI transfer.  Be careful sharing these pins!
 #include <OneWire.h>
 SoftwareSerial SoftSerial(5, 6); // RX, TX
+#define HC12SET 7  // управление режимом hc12
 SoftwareSerial SoftSerialHC(15, 16); // RX, TX
 int Temp; //температура, считанная с 18dsb20
 const int receive_pin = 2; // пин приемника
@@ -33,10 +35,22 @@ byte msg[30]; //принятое расшифрованное сообщение
 int len; // его длина
 int datalen; //  длина данных - количество значений данных
 int  device_id; // идентификатор (номер) датчика,
-byte data[10]; // принятые данные от сенсоров датчика
+byte data[5]; // принятые данные от сенсоров датчика
 int  device_type ; // тип датчика
 byte testmode = 0;
-OneWire ds(17); // датчик 18ds20 на 17 пине
+float flvcc;
+//OneWire ds(17); // датчик 18ds20 на 17 пине
+#define DHTPIN 17
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+// Переменные, создаваемые процессом сборки,
+// когда компилируется скетч
+
+// для функции memoryfree
+extern int __bss_end;
+extern void *__brkval;
+
+
 struct record  // строка записи данных в массиве датчиков
 {
   byte active = 0; // если датчик активен, то 1, если нет то 0
@@ -50,9 +64,13 @@ record md[10];
 float vbat; // напряжение батареи
 float temp1; // временное значение температуры
 float Temperature;
+float hum = 0;
 int watchdogenabled = 0;
 
 void setup() {
+  pinMode(HC12SET, OUTPUT);
+  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме
+  delay(100); 
   pinMode(POWERRECIVPIN, OUTPUT);
   pinMode(POWERESP, OUTPUT);
   pinMode(BEEPPIN, OUTPUT);
@@ -88,6 +106,12 @@ void setup() {
   SoftSerial.begin(9600);
   SoftSerialHC.begin(2400);
   SoftSerialHC.setTimeout(100);
+ digitalWrite(HC12SET, LOW); //hc 12 в настроечном
+  delay(100); //время чтобы войти в настроечный режим
+  SoftSerialHC.println("AT+FU1");
+  delay(100); //время для того чтобы принять команду 
+  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме 
+  
   vcc = readVcc();
   char ch = ' ';
   while (Serial.available()) // чистим буфер приема
@@ -99,7 +123,7 @@ void setup() {
   Serial.print("t");
   delay(4000);
   ch = Serial.read(); //если rx и tx замкнуты или с консоли в течениие четырех секунд послали букву t - войдем в режим тестировани- непрерывное чтение данных без передачи и перехода в режим сна
-  ch = 't';
+ // ch = 't';// принудительно в testmode
 
   Serial.print(ch);
   if (ch == 't')
@@ -112,7 +136,7 @@ void setup() {
     Serial.println("testmode:");
     strout = "";
     readlocaldata();
-    strout = strout + "&T1=" + String(Temperature);
+    strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
     display.display();
     while (1 == 1) readsensors();
 
@@ -125,29 +149,48 @@ void loop()
   //   digitalWrite(POWERRECIVPIN, LOW);
   //   LowPower.powerDown(SLEEP_4S, ADC_OFF, BOD_OFF);
   //    digitalWrite(POWERRECIVPIN, HIGH);
-
+  digitalWrite(HC12SET, LOW); //hc 12 в настроечном
+  delay(100);
+  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме - дернем ногу чтоб модуль проснулся
+  delay(100);// время для просыпания
   digitalWrite(POWERRECIVPIN, HIGH);
   Serial.println("Read sensors...");
   strout = "";
   readlocaldata();
-  Serial.println(Temperature);
-  strout = strout + "&T1=" + String(Temperature);
+  strout = strout + "&T1=" + String(Temperature) + "&H1=" + String(hum);
   readsensors();
   display.clearDisplay();
   display.println("Sending data:");
-  Serial.println("Sending data:");
   display.display();
   digitalWrite(POWERESP, HIGH);
   delay(1000); // всего задержка перед сатртом esp 4 сек, 1 сек стартуем чтобы померить напряжение питания
-  strout = strout + "&U0=" + String(readVcc());
+  flvcc=readVcc();
+    Serial.println(strout_tmp);
+      Serial.println(strout);
+  strout = strout + "&U0=" + String(flvcc);
+      Serial.println(strout_tmp);
+      Serial.println(strout);
+      Serial.println(memoryFree());
   strout = strout + strout_tmp;
+
+   Serial.println(memoryFree());
   display.println(strout);
-  Serial.println(strout);
+   Serial.println(memoryFree());
+
+   Serial.println(memoryFree());
   display.display();
+   Serial.println(memoryFree());
   //3.2 и 0.1  работает - нижний предел при котором возможна передача
   //оставляем 4 и 0.5 итого 4.5 сек не передачу данных от ESP
   delay(3000);
+  Serial.println("Sending data:");
+  Serial.println(strout);
   SoftSerial.println(strout);
+  digitalWrite(HC12SET, LOW); //hc 12 в настроечном
+  delay(100); //время чтобы войти в настроечный режим
+  SoftSerialHC.println("AT+SLEEP");// усыпим hc12
+  delay(100); //время для того чтобы принять команду спячкм
+  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме для спячки
   delay(500);
   Serial.println("ESP to sleep");
   display.clearDisplay();
@@ -162,8 +205,9 @@ void loop()
   digitalWrite(9, LOW);
   digitalWrite(19, LOW);
   digitalWrite(BEEPPIN, LOW);
+LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
 
-  for (int  i = 0; i < 20; i++) // 20 минут
+  /*for (int  i = 0; i < 6; i++) // сколько минут
   {
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
@@ -175,7 +219,7 @@ void loop()
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     //64 секунды примерно минута
   }
-
+*/
 
 
 }
@@ -188,7 +232,10 @@ void readsensors()
   display.setContrast(60);
   display.clearDisplay();
   display.println("read sensors:");
+  display.println(strout);
+  display.println(strout_tmp);
   display.display();
+
 
   long int starttime = millis();
   long int totaltime = 0;
@@ -199,13 +246,14 @@ void readsensors()
     md[i].vcc = 0;
 
   }
-  while (totaltime < 40000)
+    Serial.println("Start read sensors:");
+  while (totaltime < 1000)
   {
     totaltime = millis() - starttime;
     if (totaltime < 0) totaltime = -totaltime;
     if (SoftSerialHC.available()) //если модуль что-то послал
     {
-      buflen = SoftSerialHC.readBytes(buf,64); //прочитаем не более 64 символов
+      buflen = SoftSerialHC.readBytes(buf, 40); //прочитаем не более 100 символов
       Serial.print("Recived  from HC: ");
       for (int i = 0; i < buflen; i++)
       {
@@ -213,7 +261,7 @@ void readsensors()
         Serial.print(" ");
       }
       readremotedata();
-   //   beep();
+      //   beep();
     }
     buflen = VW_MAX_MESSAGE_LEN; // обязательно присвоить перед вызовом vw_get_message, иначе переменная меняется
     if (vw_get_message(buf, &buflen)) // Non-blocking
@@ -313,12 +361,26 @@ void displaymd() //показывает на экране массив  данн
       for (int j = 0;  j < md[i].datalen; j++) // перебираем все значения данных
       {
         temp1 = md[i].data[j];
-        if (temp1 > 127) // старший бит=1 , значит орицательная температура
+
+        device_type = md[device_id].device_type;
+        /*  типы датчиков
+          0-все однобайтные сенсоры температуры, точность 0,5 градуса, в байте данных содержится температура, умноженная на 2
+          1-первый сенор влажности, остальные - однобайтные температуры
+          2-первый и второй сенсор влажности, остальные- однобайтная температура
+        */
+        if ((device_type == 0) || ((device_type == 1) && (j > 0)) || ((device_type == 2) && (j > 1))) 
         {
-          temp1 = temp1 - 256;
+          if (temp1 > 127) // старший бит=1 , значит орицательная температура
+          {
+            temp1 = temp1 - 256;
+          }
+          temp1 = temp1 / 2; // было передано удвоенное значение температуры
+          strout_tmp = strout_tmp + "&T" + String(i) + String(j + 1) + "=" + String(temp1);
         }
-        temp1 = temp1 / 2; // было передано удвоенное значение температуры
-        strout_tmp = strout_tmp + "&T" + String(i) + String(j + 1) + "=" + String(temp1);
+        if  (((device_type == 1) && (j < 1)) || ((device_type == 2) && (j < 2)))
+        {
+          strout_tmp = strout_tmp + "&H" + String(i) + String(j + 1) + "=" + String(md[i].data[j]); // влажность передается в одном байте как есть
+        }
       }
     }
 
@@ -328,6 +390,7 @@ void displaymd() //показывает на экране массив  данн
   Serial.println(strout_tmp);
   display.clearDisplay();
   delay(30);  // мигнем пустым дисплеем, чтобы показать, что программа работает
+  display.display();
   if (testmode == 1)
   {
     display.print("tst ");
@@ -340,7 +403,7 @@ void displaymd() //показывает на экране массив  данн
 
 void beep()
 {
-  for (int i = 0; i < 500; i++)
+  for (int i = 0; i < 300; i++)
   {
     digitalWrite(BEEPPIN, HIGH);
     delayMicroseconds(100);
@@ -431,25 +494,43 @@ void displaydata() //показывает все пришедшие данные
 
 void readlocaldata()
 {
-  byte data[2];
-  ds.reset();
-  ds.write(0xCC);
-  ds.write(0x44); // посылаем команду начала преобразования
-  // датчику надо дать секунду с вкл питанием чтобы инициализироваться
-  delay(1000);
-  //  LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF);// поспим секунду вместо вместо delay(1000) - все таки 10 миллиампер пторебления,если разрешение термодатчика 9 bit, время преобразования будет около 0.1 сек, остальное в время датчик тока почти не потребляет
-  if ( watchdogenabled == 1) wdt_enable (WDTO_8S);
-  ds.reset();
-  ds.write(0xCC);
-  ds.write(0xBE);
-  data[0] = ds.read();
-  data[1] = ds.read();
-  // Temp = (data[1] << 8) + data[0];
-  Temperature =  (data[0] | (data[1] << 8)) / 16.0;
-  //Temp = Temp >> 4; // если сделать так, то в Temp окажется целочисленное значение температуры
-  //  Temp = Temp >> 3; // // если сделать так, то в Temp окажется целочисленное значение температуры, умноженное на 2, так как точность преобразования выставили на сенсоре 0,5 градуса,
-  //Serial.println(Temp);
 
+
+  /* блок для 18ds20
+    byte data[2];
+    ds.reset();
+    ds.write(0xCC);
+    ds.write(0x44); // посылаем команду начала преобразования
+    // датчику надо дать секунду с вкл питанием чтобы инициализироваться
+    delay(1000);
+    //  LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF);// поспим секунду вместо вместо delay(1000) - все таки 10 миллиампер пторебления,если разрешение термодатчика 9 bit, время преобразования будет около 0.1 сек, остальное в время датчик тока почти не потребляет
+    if ( watchdogenabled == 1) wdt_enable (WDTO_8S);
+    ds.reset();
+    ds.write(0xCC);
+    ds.write(0xBE);
+    data[0] = ds.read();
+    data[1] = ds.read();
+    // Temp = (data[1] << 8) + data[0];
+    Temperature =  (data[0] | (data[1] << 8)) / 16.0;
+    //Temp = Temp >> 4; // если сделать так, то в Temp окажется целочисленное значение температуры
+    //  Temp = Temp >> 3; // // если сделать так, то в Temp окажется целочисленное значение температуры, умноженное на 2, так как точность преобразования выставили на сенсоре 0,5 градуса,
+    //Serial.println(Temp);
+  */
+  // блок для am2320
+  Temperature = dht.readTemperature();
+  hum = dht.readHumidity();
+
+
+}
+
+int memoryFree()
+{
+   int freeValue;
+   if((int)__brkval == 0)
+      freeValue = ((int)&freeValue) - ((int)&__bss_end);
+   else
+      freeValue = ((int)&freeValue) - ((int)__brkval);
+   return freeValue;
 }
 
 /* расчет энергосбережения если 1 мин читаем данные 6 сек посылаем и 5 мин спим
@@ -479,4 +560,5 @@ void readlocaldata()
   время чтения можно оставить 60 сек, основной вклад (2/3) - время передачи
 
   если сократим время передачи до 2 сек, то получим 40 дней при 5 минутном цикле
+  пока сделал на 40сек, потр 10 ма, раз в 6 мин, должно хватить на месяц
 */
