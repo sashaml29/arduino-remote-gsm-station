@@ -1,38 +1,57 @@
 #include <avr/wdt.h>  // watchdog
+#include "DHTmy.h" // в библиотеке изменены 2 строчки: 
+////delay(250);  //закомментирована только эта строка, так как заранее до вызова библиотеки в взводим ногу в хай
+//  delay(2); // здесь было 20 миллисек но по даташиту dht22 достаточно полмилисекунды
 #include <VirtualWire.h>
 #include <LowPower.h>
 #include <EEPROM.h>
 #include <OneWire.h>
 #include <SoftwareSerial.h>
-SoftwareSerial SoftSerial(18, 17); // RX, TX
+SoftwareSerial SoftSerialHC(18, 17); // RX, TX
 #define HC12SET 16
 #define POWERTRANSMITTERPIN 6 // с этой ноги подается питание на передатчик
 #define LEDPIN 13 // нога индикаторного диода
 #define TRANSMITTERDATAPIN 5 // передатчик на 5 пине
 int watchdogenabled = 0; // 1 или 0 - будет ли использоваться в скетче watchdog, нормально работает только при заливке скетча стандартным образом и наличии правильного optiboot, при заливке через usbasp - не работает, при срабатывании watchdog получается bootloop
-byte  device_id = 2; // идентификатор датчика, потом прочитаем из EEPROM
-byte  device_type = 0;
+
+// блок для eeprom
 /*  типы датчиков
-    0-все однобайтные сенсоры температуры, точность 0,5 градуса, в байте темп умноженная на 2
-    1-первый сенор влажности, остальные - однобайтные температуры
+    0-все однобайтные сенсоры температуры на ногах 3, 8, 7, точность 0,5 градуса, в байте темп умноженная на 2
+    1-первый сенор влажности на ноге 3, остальные - однобайтные температуры
     2-первый и второй сенсор влажности, остальные- однобайтная температура
 */
-byte  vbat_corr = 100; // коррекция измеренного напр питания
+byte  device_id = 2; // идентификатор датчика, потом прочитаем из EEPROM
+byte  device_type = 1;
 char device_name[4] = {'d', 'a', 't', '2'};
+byte  vbat_corr = 100; // коррекция измеренного напр питания
+int dscount = 1;
+int dhtcount = 1;
+
+
+
 int Temp1; //температура, считанная с 18dsb20
 byte data_temp1; // посылаемый байт температуры, целое - температура*2, на приемной стороне поделим на 2 и получим температуру с точностью до 0,5 градуса
 int Temp2; //температура, считанная с 18dsb20
 byte data_temp2; // посылаемый байт температуры, целое - температура*2, на приемной стороне поделим на 2 и получим температуру с точностью до 0,5 градуса
 int Temp3; //температура, считанная с 18dsb20
 byte data_temp3; // посылаемый байт температуры, целое - температура*2, на приемной стороне поделим на 2 и получим температуру с точностью до 0,5 градуса
-int t; // температурв с dht
-int h; //влажность с dht
+int TempDHT1; // температурв с dht1
+int hDHT1; //влажность с dht1
+byte data_temp_dht1;
+byte data_h_dht1;
+int TempDHT2; // температурв с dht1
+int hDHT2; //влажность с dht1
+byte data_temp_dht2;
+byte data_h_dht2;
+
 byte msg[40]; //массив для отсылки данных
 int j = 0; //счетчик основного цикла
 OneWire ds1(3); // датчик 18ds20 на 3 пине
 OneWire ds2(8); //
 OneWire ds3(7); //
-int dscount = 2;
+DHT dht1(14, DHT22); // сенсоры am2320 на ногах 14 и 15
+DHT dht2(15, DHT22);
+
 
 String info;
 
@@ -50,8 +69,12 @@ void setup() {
     device_name[1] = EEPROM.read(3);
     device_name[2] = EEPROM.read(4);
     device_name[3] = EEPROM.read(5);
-    vbat_corr = EEPROM.read(5);
+    vbat_corr = EEPROM.read(6);
+    dscount = EEPROM.read(7);
+    dhtcount = EEPROM.read(8);
   }
+  dscount = 1;
+  dhtcount = 1;
   pinMode(LEDPIN, OUTPUT);
   pinMode(19, INPUT);
   digitalWrite(19, HIGH); //подтягиваем вход к плюсу
@@ -59,7 +82,14 @@ void setup() {
   pinMode(POWERTRANSMITTERPIN, OUTPUT);
   pinMode(HC12SET, OUTPUT);
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме
-  SoftSerial.begin(2400);
+  SoftSerialHC.begin(2400);
+  delay(100);
+  digitalWrite(HC12SET, LOW); //hc 12 в настроечном
+  delay(100); //время чтобы войти в настроечный режим
+  SoftSerialHC.println("AT+FU1");
+  delay(100); //время для того чтобы принять команду
+  digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме
+  delay(100);
   Serial.begin(9600);
 
   vw_set_tx_pin(TRANSMITTERDATAPIN);
@@ -70,10 +100,10 @@ void setup() {
   for (int i = 0; i <= 10; i++)
   { // помигаем диодом часто, делая полную посылку данных, чтобы показать что скетч стартует
     //    sendfull();
-     digitalWrite(LEDPIN, true); // включим светодиод на время передачи
+    digitalWrite(LEDPIN, true); // включим светодиод на время передачи
     delay(100);
-      digitalWrite(LEDPIN, false); // включим светодиод на время передачи
-      delay(100);
+    digitalWrite(LEDPIN, false); // включим светодиод на время передачи
+    delay(100);
   }
   //установим разрешение датчика на точность 0,5 градуса, время на конвертацию будет меньше
   if (dscount > 0)
@@ -114,7 +144,8 @@ void setup() {
     ds3.reset();
     ds3.write(0x48); // // команда записи в eprom записи конфигурации (иначе после выкл питания состояние датчика не запоминается), в некоторых примерах пишут, что запись в епром должна быть  только после  ds.reset()
   }
-
+  dht1.begin();
+  dht2.begin();
   delay(15);
   if ( watchdogenabled == 1) wdt_enable (WDTO_8S); // watchdog на 8 секунд, родной загрузчик ардуино должен быть обязательно заменен на otiboot, иначе будет циклическая перезагрузка
   byte normalmode = digitalRead(19);
@@ -135,6 +166,9 @@ void setup() {
 void loop()
 {
   wdt_reset();  // вызываемые процедуры из loop() суммарно не должны длиться более 8 секунд (либо в них должен стоять еще wdt_reset(); ) , иначе перезагруга
+
+
+
   j = j + 1;
   readdata();
   if (j < 10)
@@ -148,9 +182,9 @@ void loop()
     j = 0;
   }
 
-    LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF); //спим нужное количество времени
- //LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
-  //  LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+  LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF); //спим нужное количество времени
+  LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+  LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
   if ( watchdogenabled == 1) wdt_enable (WDTO_8S); // powerDown отключает watchdogenabled, надо его снова активировать
   //  delay(10000);
   //тест ватчдога, если раскомментировать, то будет перезагрузка
@@ -197,6 +231,8 @@ void readdata()
   ds3.write(0xCC);
   ds3.write(0x44); // посылаем команду начала преобразования
   // датчику надо дать секунду с вкл питанием чтобы инициализироваться
+  digitalWrite(14, HIGH); // подаем высокий уровень на ноги датчиков dht
+  digitalWrite(15, HIGH);
   LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF);// поспим секунду вместо вместо delay(1000) - все таки 10 миллиампер пторебления,если разрешение термодатчика 9 bit, время преобразования будет около 0.1 сек, остальное в время датчик тока почти не потребляет
   if ( watchdogenabled == 1) wdt_enable (WDTO_8S);
   ds1.reset();
@@ -208,6 +244,7 @@ void readdata()
   ds3.reset();
   ds3.write(0xCC);
   ds3.write(0xBE);
+
 
   data[0] = ds1.read();
   data[1] = ds1.read();
@@ -232,6 +269,24 @@ void readdata()
   Temp3 = Temp3 >> 3; // // если сделать так, то в Temp окажется целочисленное значение температуры, умноженное на 2, так как точность преобразования выставили на сенсоре 0,5 градуса,
   //Serial.println(Temp);
   data_temp3 = Temp3;
+
+
+  float tt = dht1.readTemperature(false, true); // первый параметр- градусы цельсия, второй -форсировать чтение новых данных, иначе библиотека думет что прошло мало времени
+  float hh = dht1.readHumidity();
+  tt = tt * 2;
+  TempDHT1 = tt;
+  hDHT1 = hh;
+  data_temp_dht1 = TempDHT1;
+  data_h_dht1 = hDHT1;
+
+  tt = dht2.readTemperature(false, true); // первый параметр- градусы цельсия, второй -форсировать чтение новых данных, иначе библиотека думет что прошло мало времени
+  hh = dht2.readHumidity();
+  tt = tt * 2;
+  TempDHT2 = tt;
+  hDHT2 = hh;
+  data_temp_dht2 = TempDHT1;
+  data_h_dht2 = hDHT2;
+
 }
 
 
@@ -240,14 +295,38 @@ void sendshort() // передача данных в сокращенном ви
   digitalWrite(POWERTRANSMITTERPIN, HIGH); // включим питание передатчика
   digitalWrite(LEDPIN, true); // включим светодиод на время передачи
   msg[0] = 10 * device_type + device_id; //в первом байте тип датчика и номер датчика, десятки- тип датчика, единицы- номер датчика
-  msg[1] = data_temp1;
-  msg[2] = data_temp2;
-  msg[3] = data_temp3;
-  encrypt(1 + dscount); // так шифруем передачу данные дублируются в обратном порядке, на приемной стороне так убедимся, что это наша передача и заодно удостоверимся в корректности данных, посылаем вдвое больше символов сообщения, чем было исходных
-  // vw_send((uint8_t *)msg, (1 + dscount) * 2);
-  // vw_wait_tx(); // ждем  икончания передачи
-  sendhc12((1 + dscount) * 2);
-  
+  if (device_type == 0)
+  {
+    msg[1] = data_temp1;
+    msg[2] = data_temp2;
+    msg[3] = data_temp3;
+  }
+  if (device_type == 1)
+  {
+    msg[1] = data_h_dht1;
+    msg[2] = data_temp_dht1;
+    msg[3] = data_temp1;
+    msg[4] = data_temp2;
+    msg[5] = data_temp3;
+  }
+  if (device_type == 2)
+  {
+    msg[1] = data_h_dht1;
+    msg[2] = data_h_dht2;
+    msg[3] = data_temp_dht1;
+    msg[4] = data_temp_dht2;
+    msg[5] = data_temp1;
+    msg[6] = data_temp2;
+    msg[7] = data_temp3;
+  }
+
+
+  encrypt(1 + dscount + dhtcount * 2); // так шифруем передачу данные дублируются в обратном порядке, на приемной стороне так убедимся, что это наша передача и заодно удостоверимся в корректности данных, посылаем вдвое больше символов сообщения, чем было исходных
+  vw_send((uint8_t *)msg, (1 + dscount + dhtcount * 2) * 2);
+  vw_wait_tx(); // ждем  икончания передачи
+  // sendhc12((1 + dscount) * 2);
+  digitalWrite(POWERTRANSMITTERPIN, LOW); //выключим питание передатчика
+  digitalWrite(LEDPIN, false); //гасим диод
 }
 
 void sendfull() // полная посылка данных с именем датчика, типом, и состоянием батареи
@@ -267,13 +346,35 @@ void sendfull() // полная посылка данных с именем да
   msg[5] = device_name[3];
   msg[6] = sbatt; // символ разряжена батарея (b) или нет (B)
   msg[7] = symbolvcc; // напряжение питания, умноженное на 10
-  msg[8] = data_temp1; // сами данные
-  msg[9] = data_temp2; // сами данные
-  msg[10] = data_temp3; // сами данные
-  encrypt(8 + dscount);
-  //vw_send((uint8_t *)msg, (8 + dscount) * 2);
- // vw_wait_tx(); // ждем  икончания передачи
-  sendhc12((8 + dscount) * 2);
+  if (device_type == 0)
+  {
+    msg[8] = data_temp1; // сами данные
+    msg[9] = data_temp2; // сами данные
+    msg[10] = data_temp3; // сами данные
+  }
+  if (device_type == 1)
+  {
+    msg[8] = data_h_dht1;
+    msg[9] = data_temp_dht1;
+    msg[10] = data_temp1;
+    msg[11] = data_temp2;
+    msg[12] = data_temp3;
+  }
+  if (device_type == 2)
+  {
+    msg[8] = data_h_dht1;
+    msg[9] = data_h_dht2;
+    msg[10] = data_temp_dht1;
+    msg[11] = data_temp_dht2;
+    msg[12] = data_temp1;
+    msg[13] = data_temp2;
+    msg[14] = data_temp3;
+  }
+
+  encrypt(8 + dscount + dhtcount * 2);
+  vw_send((uint8_t *)msg, (8 + dscount + dhtcount * 2) * 2);
+  vw_wait_tx(); // ждем  икончания передачи
+  // sendhc12((8 + dscount) * 2);
   digitalWrite(POWERTRANSMITTERPIN, LOW); //выключим питание передатчика
   digitalWrite(LEDPIN, false); //гасим диод
 }
@@ -295,6 +396,8 @@ void writefirstdataeeprom()
   EEPROM.write(4, device_name[2]); //3 символ имени датчика
   EEPROM.write(5, device_name[3]); //4 символ имени датчика
   EEPROM.write(6, 100); //значение коррекции измерения напряжения питания батареи, индивидуальное для каждого микроконтроллера, в процентах, 100% -коррекции нет
+  EEPROM.write(7, dscount); // кол-во датчиков ds
+  EEPROM.write(8, dhtcount); //кол-во датчиков dht
 }
 
 
@@ -303,12 +406,12 @@ void sendhc12(int len) //посылает байты из глобального
   digitalWrite(HC12SET, LOW); //hc 12 в настроечном
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме - дернем ногу чтоб модуль проснулся
   delay(50);// время для просыпания
-  SoftSerial.write(msg,len);
-  SoftSerial.flush();
+  SoftSerialHC.write(msg, len);
+  SoftSerialHC.flush();
   delay(50); //время для передачи данных радиомодулем
   digitalWrite(HC12SET, LOW); //hc 12 в настроечном
   delay(50); //время чтобы войти в настроечный режим
-  SoftSerial.println("AT+SLEEP");
+  SoftSerialHC.println("AT+SLEEP");
   delay(50); //время для того чтобы принять команду спячкм
   digitalWrite(HC12SET, HIGH); //hc 12 в нормальном режиме для спячки
   digitalWrite(POWERTRANSMITTERPIN, LOW); //выключим питание передатчика
@@ -332,5 +435,5 @@ void sendhc12(int len) //посылает байты из глобального
 
    для модуля hc12 аремя передачи 0.2с с током 50 ма , если раз в 16 сек то 16*0,01+1*0,1+ 50*0,2= 11ма/сек, средний ток 11/16=0,7 ма, 2000/0,7=2800 часов =119 дней, 3 месяца,
    раз в пол минуты - полгода, раз в минуту - год
-   
+
 */
